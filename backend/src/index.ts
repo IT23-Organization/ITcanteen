@@ -1,32 +1,49 @@
 import { Elysia, t } from "elysia"
-import { cors } from "@elysiajs/cors"
+import { cors }      from "@elysiajs/cors"
+import { openapi }   from '@elysiajs/openapi'
 
-const state = {
-  count: 0
-}
+import { State } from "./state"
+import * as log  from "./log"
+import { orderPlugin } from "./routes/order"
+
+const port = process.env.PORT || 3000
+const db_path = process.env.DB_PATH || "data.db"
+
+/// Global application state
+export const state = new State(db_path)
 
 const app = new Elysia()
   .use(cors())
-  .ws("/count", {
-    open(ws) {
-      ws.subscribe("count")
+  .use(openapi({
+    documentation: {
+      tags: [
+        { name: "Order",  description: "Order related endpoints"               },
+        { name: "User",   description: "Endpoints that will be used by user"   },
+        { name: "Seller", description: "Endpoints that will be used by seller" },
+      ]
     },
-    message(ws, msg) {
-      if (typeof msg === "string" && msg === "get") {
-        ws.publish("count", state.count)
-      }
+    path: "/docs",
+  }))
+  .onError(({ error, set }) => {
+    if (error instanceof Error) {
+      log.error(error.message)
+      set.status = 500
+      return { message: `Internal Server Error: ${error.message}` }
     }
   })
-  .post("/api/count/incr", ({ body }) => {
-    state.count += body.by
-    app.server?.publish("count", `${state.count}`)
-    return state.count
-  }, {
-    body: t.Object({
-      by: t.Number()
-    })
-  })
-  .listen(3000)
+  .use(orderPlugin)
+  .listen(port)
 
-console.log("Server running at http://localhost:3000")
+log.info(`Server running at http://localhost:${port}`)
+
+// Cleanup on exit
+process.on("SIGINT", () => {
+  log.info("Shutting down server...")
+  state.cleanup()
+  app.stop().then(() => {
+    log.info("Server stopped.")
+    process.exit(0)
+  })
+})
+
 export type App = typeof app
