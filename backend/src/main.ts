@@ -5,6 +5,7 @@ import { openapi }   from '@elysiajs/openapi'
 import { State } from "./state"
 import * as log  from "./log"
 import { orderPlugin } from "./routes/order"
+import { loginPlugin } from "./routes/login"
 
 const port = process.env.PORT || 3000
 const db_path = process.env.DB_PATH || "data.db"
@@ -31,6 +32,7 @@ const app = new Elysia()
       return { message: `Internal Server Error: ${error.message}` }
     }
   })
+  .use(loginPlugin)
   .use(orderPlugin)
   .listen(port)
 

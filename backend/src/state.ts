@@ -20,7 +20,9 @@ export class State {
         this.db.run(`
             CREATE TABLE IF NOT EXISTS sellers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT
+                name     TEXT
+                password TEXT
+                products TEXT
             )`)
 
         this.db.run(`
@@ -65,6 +67,10 @@ export class State {
         this.replicateCacheToDB()
         this.db.close()
     }
+
+    // ------------------------------------------------------------
+    // Order related methods
+    // ------------------------------------------------------------
 
     didWrite() {
         this.#writeCount += 1
@@ -160,5 +166,26 @@ export class State {
         })
         tx()
         log.info("Replication complete.")
+    }
+
+    // ------------------------------------------------------------
+    // User(Seller) related methods
+    // ------------------------------------------------------------
+
+    createUser(username: string, password_hash: string): string | true {
+        if (this.cache.sellers.find(u => u.name === username)) {
+            return "User already exists"
+        }
+
+        const new_user: Seller = {
+            id: this.cache.sellers.length + 1,
+            name: username,
+            password: password_hash,
+            products: [],
+        }
+        this.cache.sellers.push(new_user)
+        // Immediate replication for user creation
+        this.replicateCacheToDB()
+        return true
     }
 }
