@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { GiHamburgerMenu } from "react-icons/gi";
 import { MdLogout } from "react-icons/md";
+import Link from "next/link";
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
@@ -40,10 +41,10 @@ export default function Navbar() {
         >
           <ul className="flex flex-col gap-3 pl-5">
             <li>
-              <button className="flex items-center gap-2 text-white/90 text-2xl">
+              <Link href='/login' className="flex items-center gap-2 text-white/90 text-2xl">
                 <MdLogout className="w-6 h-6" />
                 Log Out
-              </button>
+              </Link>
             </li>
           </ul>
         </div>
