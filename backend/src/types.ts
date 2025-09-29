@@ -2,6 +2,8 @@
 export type Seller = {
     id:       number
     name:     string
+    /// Hashed password
+    password: string
     /// List of product IDs provided by this seller
     products: number[]
 }

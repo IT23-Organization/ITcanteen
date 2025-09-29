@@ -1,19 +1,31 @@
 import { Elysia, t } from "elysia"
-import { state } from "../index"
+import { jwt } from "@elysiajs/jwt"
+import { state } from "../main"
 
 export const orderPlugin = new Elysia()
+  .use(jwt({
+      name: "jwt",
+      secret: "iloveit23",
+      exp: "7d"
+  }))
   .group("/api/order", app => app
-    .get("/seller", ({ query }) => {
+    .get("/seller", async ({ query, jwt, cookie: { auth } }) => {
+      if (!(await jwt.verify(auth.value))) {
+        return {
+          success: false,
+          message: "Unauthorized"
+        }
+      }
       return {
         success: true,
-        orders:  state.getOrdersForSeller(
+        orders: state.getOrdersForSeller(
           query.seller_id,
           query.only_pending || true
         )
       }
     }, {
+      tags: ["Orders"],
       detail: {
-        tag: ["Order", "Seller"],
         description: "Get all orders for a specific seller"
       },
       query: t.Object({
@@ -25,27 +37,42 @@ export const orderPlugin = new Elysia()
           default: true
         }))
       }),
-      response: t.Object({
-        success: t.Boolean(),
-        // TODO: Schema -> Typescript types
-        orders: t.Array(t.Any())
+      response: {
+        200: t.Object({
+          success: t.Boolean(),
+          // TODO: Schema -> Typescript types
+          orders: t.Array(t.Any())
+        }),
+        // Unauthorized
+        401: t.Object({
+          success: t.Boolean(),
+          message: t.String(),
+        })
+      },
+      cookie: t.Cookie({
+        auth: t.String(),
       })
     })
     // Update order status (e.g., mark as completed or canceled)
     // to be used by seller
-    .post("/seller/update", ({ body }) => {
+    .post("/seller/update", async ({ body, jwt, cookie: { auth } }) => {
+      if (!(await jwt.verify(auth.value))) {
+        return {
+          success: false,
+          message: "Unauthorized"
+        }
+      }
+
       // ? Maybe check if the order belongs to the seller?
       const success = state.updateOrder(
         body.order_id,
         body.status,
         body.paid
       )
-      return {
-        success
-      }
+      return { success }
     }, {
+      tags: ["Orders"],
       detail: {
-        tag: ["Order", "Seller"],
         description: "Update the status of a specific order"
       },
       body: t.Object({
@@ -55,6 +82,18 @@ export const orderPlugin = new Elysia()
         status: t.Optional(t.UnionEnum(["pending", "completed", "canceled"])),
         paid:   t.Optional(t.Boolean())
       }),
+      response: {
+        200: t.Object({
+          success: t.Boolean()
+        }),
+        401: t.Object({
+          success: t.Boolean(),
+          message: t.String(),
+        })
+      },
+      cookie: t.Cookie({
+        auth: t.String(),
+      })
     })
     .get("/user", ({ query }) => {
       return {
@@ -62,8 +101,8 @@ export const orderPlugin = new Elysia()
         orders:  state.getOrdersForUser(query.user)
       }
     }, {
+      tags: ["Orders"],
       detail: {
-        tag: ["Order", "User"],
         description: "Get all orders placed by a specific user"
       },
       query: t.Object({
@@ -91,8 +130,8 @@ export const orderPlugin = new Elysia()
         order_id
       }
     }, {
+      tags: ["Orders"],
       detail: {
-        tag: ["Order", "User"],
         description: "Place a new order",
       },
       body: t.Object({
