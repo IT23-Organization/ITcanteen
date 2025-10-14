@@ -1,0 +1,5 @@
+(executables
+ (names main)
+ (public_names backend)
+ (libraries yojson ppx_deriving_yojson.runtime caqti-driver-sqlite3 dream)
+ (preprocess (pps lwt_ppx ppx_deriving.show ppx_deriving_yojson)))

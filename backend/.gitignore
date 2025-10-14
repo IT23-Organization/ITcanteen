@@ -1,46 +1,32 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+*.annot
+*.cmo
+*.cma
+*.cmi
+*.a
+*.o
+*.cmx
+*.cmxs
+*.cmxa
 
-.env
-*.db
-*.db-journal
+# complier output
+/*.scm
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# ocamlbuild working directory
+_build/
 
-# testing
-/coverage
+# ocamlbuild targets
+*.byte
+*.native
 
-# next.js
-/.next/
-/out/
+# oasis generated files
+setup.data
+setup.log
 
-# production
-/build
+# Merlin configuring file for Vim and Emacs
+.merlin
 
-# misc
-.DS_Store
-*.pem
+# Dune generated files
+*.install
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# local env files
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# vercel
-.vercel
-
-**/*.trace
-**/*.zip
-**/*.tar.gz
-**/*.tgz
-**/*.log
-package-lock.json
-**/*.bun
+# Local OPAM switch
+_opam/

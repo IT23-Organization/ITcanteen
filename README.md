@@ -9,14 +9,12 @@ bun run dev
 
 Run backend:
 ```sh
-cd backend
+# Initialize (run once)
+sqlite3 data.sqlite < init.sql
+opam install . --deps-only
 
-# Set up environment variables
-echo "DB_PATH=data.db" > .env
-echo "PORT=3000" >> .env
-
-bun install
-bun run dev
+# Run backend
+dune exec backend
 ```
 
 Run Discord bot:
