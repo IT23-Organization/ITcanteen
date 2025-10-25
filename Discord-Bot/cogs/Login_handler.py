@@ -19,13 +19,13 @@ class Login(commands.Cog):
                 # The crucial part: Call .sync() on the bot's central command tree
                 
                 # --- OPTION A: GUILD SYNC (Fastest for testing) ---
-                test_guild = discord.Object(id=GUILD_ID)
-                synced = await self.bot.tree.sync(guild=test_guild)
-                print(f"SyncCog: Synced {len(synced)} commands to guild {GUILD_ID}.")
+                # test_guild = discord.Object(id=GUILD_ID)
+                # synced = await self.bot.tree.sync(guild=test_guild)
+                # print(f"SyncCog: Synced {len(synced)} commands to guild {GUILD_ID}.")
                 
                 # --- OPTION B: GLOBAL SYNC (Slow, for production) ---
-                # synced = await self.bot.tree.sync()
-                # print(f"SyncCog: Globally synced {len(synced)} commands.")
+                synced = await self.bot.tree.sync()
+                print(f"SyncCog: Globally synced {len(synced)} commands.")
                 
                 self.bot.synced = True # Set the flag to prevent re-syncing
                 
@@ -35,12 +35,12 @@ class Login(commands.Cog):
     @commands.command(name="login")
     async def login(self, ctx):
         await ctx.send(f"Hello {ctx.author.mention}, you trigger the !login command!")
-    
-    @app_commands.command(name="secret", description="Sends an ephemeral message.")
-    async def secret_command(self, interaction: discord.Interaction):
-        # The key is the 'ephemeral=True' argument
-        await interaction.response.send_message("Shhh! This message is only for your eyes 👀.", ephemeral=True)
-        # You must use interaction.response for the initial response.
+    @app_commands.command(name="secure",description="Give you secure message")
+    async def secure_message(self,interaction = discord.Interaction):
+        await interaction.response.send_message(
+            "This is for you.",
+            ephemeral=True
+        )
 async def setup(bot):
     bot.synced = False
     await bot.add_cog(Login(bot))
