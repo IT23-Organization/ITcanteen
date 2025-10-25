@@ -1,7 +1,7 @@
 import discord
 from discord import activity
-from discord import app_commands
 from discord.ext import commands
+from discord import app_commands
 
 GUILD_ID = 1418981762872115343
 
