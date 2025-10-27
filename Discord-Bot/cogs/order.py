@@ -69,8 +69,11 @@ class Ticket(commands.Cog):
                 await message.channel.send("รับออเดอร์แล้ว")
                 return
 
-        # 3. ถ้าไม่ใช่ทั้งสองอย่าง ให้ส่งไปประมวลผลคำสั่ง (เช่น !menu)
-        await self.bot.process_commands(message)
+        # 3. ถ้าไม่ใช่ทั้งสองอย่าง (และขึ้นต้นด้วย !) ให้ปล่อยผ่าน
+        #    เพื่อให้ bot.py (ตัวหลัก) ประมวลผลคำสั่งเอง
+        #
+        # await self.bot.process_commands(message) # <-- ลบบรรทัดนี้ออก
+        pass # ปล่อยให้ฟังก์ชันจบไปเฉยๆ
 
     # --- ดึงมาจากโค้ดไฟล์ที่ 2 ---
     @commands.command(name="menu")
