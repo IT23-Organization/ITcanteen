@@ -3,7 +3,7 @@ from discord.ext import commands
 import os
 import re
 
-# --- ดึงมาจากโค้ดไฟล์ที่ 2 ---
+# --- รายชื่อร้านอาหาร ---
 RESTAURANT_MENUS = {
     "mama": "image/menu.jpg",
     "pizza": "image/menu.jpg",
@@ -12,7 +12,7 @@ RESTAURANT_MENUS = {
     "mcd": "image/menu.jpg",
 }
 
-# --- ดึงมาจากโค้ดไฟล์ที่ 1 ---
+# --- ฟังก์ชันแยกเมนู ---
 def parse_menu_item(text):
     pattern = r"(.*?)\s*\((.*?)\)$"
     match = re.search(pattern, text)
@@ -31,22 +31,55 @@ class Ticket(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
+
+        # 1. ถ้าเป็นข้อความจากบอทตัวเอง ให้เมิน
+        if message.author == self.bot:
+            return
+
+        # 2. ตรวจสอบข้อความต้อนรับจาก Ticket Tool
+        # (เช็กว่าผู้ส่งเป็นบอท, ชื่อ 'Ticket Tool', และส่ง Embed มา)
+        if message.author.bot and message.author.name == "Ticket Tool" and message.embeds:
+            # สร้าง list ร้านอาหาร
+            restaurant_list_str = ""
+            for i, name in enumerate(RESTAURANT_MENUS.keys(), 1):
+                restaurant_list_str += f"{i}. {name.capitalize()}\n" 
+
+            response_message = (
+                "These are the restaurants in the canteen:\n"
+                f"{restaurant_list_str}"
+                "Type `!menu <name>` to see the menu. eg `!menu mama`"
+            )
+
+            await message.channel.send(response_message)
+            return # ทำงานเสร็จแล้ว ออกได้เลย
+
+        # 3. ถ้าเป็นข้อความจากบอทตัวอื่น (ที่ไม่ใช่ Ticket Tool ที่เพิ่งเช็กไป) ให้เมิน
         if message.author.bot:
             return
 
-        # --- รวม Logic การฟังสรุปไว้ในที่เดียว ---
+        # --- จบส่วนที่แก้ไข ---
+
+        # 4. โค้ดเดิมสำหรับมนุษย์ (ยังทำงานเหมือนเดิม)
         if isinstance(message.channel, discord.TextChannel) and message.channel.name.startswith("ticket-"):
             content = message.content.strip()
             lower = content.lower()
 
-            # 1. เช็ก "open ticket" (จากทั้งสองไฟล์)
-            if "open ticket" in lower:
-                await message.channel.send(
-                    "These are the restaurants in the canteen:\n1. Mama\n2. Pizza\n3. KFC\n4. Starbucks\n5. McD\nType `!menu <name>` to see the menu. eg `!menu mama`"
+            # 4.1 เช็ก "restaurant" (เผื่อไว้กดยังไงก็ขึ้น)
+            if "restaurant" in lower: 
+                restaurant_list_str = ""
+                for i, name in enumerate(RESTAURANT_MENUS.keys(), 1):
+                    restaurant_list_str += f"{i}. {name.capitalize()}\n" 
+
+                response_message = (
+                    "These are the restaurants in the canteen:\n"
+                    f"{restaurant_list_str}"
+                    "Type `!menu <name>` to see the menu. eg `!menu mama`"
                 )
+
+                await message.channel.send(response_message)
                 return
             
-            # 2. เช็กออเดอร์ (จากไฟล์ที่ 1)
+            # 4.2 เช็กออเดอร์ (ถ้าไม่ได้ขึ้นต้นด้วย !)
             if not content.startswith("!"): 
                 menu, note = parse_menu_item(content)
 
@@ -69,13 +102,9 @@ class Ticket(commands.Cog):
                 await message.channel.send("รับออเดอร์แล้ว")
                 return
 
-        # 3. ถ้าไม่ใช่ทั้งสองอย่าง (และขึ้นต้นด้วย !) ให้ปล่อยผ่าน
-        #    เพื่อให้ bot.py (ตัวหลัก) ประมวลผลคำสั่งเอง
-        #
-        # await self.bot.process_commands(message) # <-- ลบบรรทัดนี้ออก
-        pass # ปล่อยให้ฟังก์ชันจบไปเฉยๆ
+            pass # ปล่อยผ่านสำหรับคำสั่ง (เช่น !menu)
 
-    # --- ดึงมาจากโค้ดไฟล์ที่ 2 ---
+    # --- คำสั่ง !menu (เหมือนเดิม) ---
     @commands.command(name="menu")
     async def menu_cmd(self, ctx: commands.Context, restaurant: str = None):
         if restaurant is None:
