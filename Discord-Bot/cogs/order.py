@@ -52,7 +52,7 @@ class Ticket(commands.Cog):
 
                 embed = discord.Embed(
                     title="[S]บันทึกออเดอร์ (WIP) :tropical_drink:",
-                    description="ร้านอาหารได้รับออเดอร์ของคุณ และกำลังเตรียมอาหารให้สำหรับคุณ",
+                    description="ร้านอาหารได้รับออเดอร์ของคุณ และกำลังเตรียมอาหารให้คุณ",
                     color=discord.Color.green()
                 )
                 
