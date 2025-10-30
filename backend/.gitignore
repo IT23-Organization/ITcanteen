@@ -1,32 +1,22 @@
-*.annot
-*.cmo
-*.cma
-*.cmi
-*.a
-*.o
-*.cmx
-*.cmxs
-*.cmxa
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# complier output
-/*.scm
+# Test binary, built with `go test -c`
+*.test
 
-# ocamlbuild working directory
-_build/
+# Output of the go coverage tool
+*.out
 
-# ocamlbuild targets
-*.byte
-*.native
+# Dependency directories (uncomment to ignore)
+# vendor/
 
-# oasis generated files
-setup.data
-setup.log
-
-# Merlin configuring file for Vim and Emacs
-.merlin
-
-# Dune generated files
-*.install
-
-# Local OPAM switch
-_opam/
+# IDE and Editor-specific files (examples)
+.idea/
+.vscode/
+*.swp
+*.bak
+*~
