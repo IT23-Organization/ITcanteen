@@ -37,7 +37,6 @@ class Ticket(commands.Cog):
             return
 
         # 2. ตรวจสอบข้อความต้อนรับจาก Ticket Tool
-        # (เช็กว่าผู้ส่งเป็นบอท, ชื่อ 'Ticket Tool', และส่ง Embed มา)
         if message.author.bot and message.author.name == "Ticket Tool" and message.embeds:
             # สร้าง list ร้านอาหาร
             restaurant_list_str = ""
@@ -51,20 +50,18 @@ class Ticket(commands.Cog):
             )
 
             await message.channel.send(response_message)
-            return # ทำงานเสร็จแล้ว ออกได้เลย
+            return
 
         # 3. ถ้าเป็นข้อความจากบอทตัวอื่น (ที่ไม่ใช่ Ticket Tool ที่เพิ่งเช็กไป) ให้เมิน
         if message.author.bot:
             return
-
-        # --- จบส่วนที่แก้ไข ---
 
         # 4. โค้ดเดิมสำหรับมนุษย์ (ยังทำงานเหมือนเดิม)
         if isinstance(message.channel, discord.TextChannel) and message.channel.name.startswith("ticket-"):
             content = message.content.strip()
             lower = content.lower()
 
-            # 4.1 เช็ก "restaurant" (เผื่อไว้กดยังไงก็ขึ้น)
+            # 4.1 เช็ก "restaurant"
             if "restaurant" in lower: 
                 restaurant_list_str = ""
                 for i, name in enumerate(RESTAURANT_MENUS.keys(), 1):
@@ -102,18 +99,30 @@ class Ticket(commands.Cog):
                 await message.channel.send("รับออเดอร์แล้ว")
                 return
 
-            pass # ปล่อยผ่านสำหรับคำสั่ง (เช่น !menu)
+            pass
 
-    # --- คำสั่ง !menu (เหมือนเดิม) ---
+    # --- คำสั่ง !menu (นี่คือส่วนที่แก้ไข) ---
     @commands.command(name="menu")
     async def menu_cmd(self, ctx: commands.Context, restaurant: str = None):
         if restaurant is None:
             await ctx.send("Please specify a restaurant. Example: `!menu mama`")
             return
+            
         rest = restaurant.lower()
         path = RESTAURANT_MENUS.get(rest)
+        
         if path and os.path.isfile(path):
+            # 1. ส่งรูปเมนู (เหมือนเดิม)
             await ctx.send(file=discord.File(path))
+            
+            # 2. ส่งวิธีสั่งซื้อ (ส่วนที่เพิ่มเข้ามา)
+            example_message = (
+                "**วิธีสั่งอาหาร:** พิมพ์ชื่อเมนูที่ต้องการได้เลย\n"
+                "ตัวอย่าง: `ข้าวผัดกะเพรา`\n"
+                "ตัวอย่าง (มีหมายเหตุ): `ข้าวผัดกะเพรา (ไข่ดาวไม่สุก)`"
+            )
+            await ctx.send(example_message)
+            
         else:
             await ctx.send("Sorry, I don't have the menu for that restaurant.")
 
