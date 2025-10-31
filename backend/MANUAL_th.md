@@ -1,5 +1,11 @@
 # API
 
+| | |
+|-|-|
+| Jump to | [ร้านค้า (stores/)](#endpoints-ร้านค้า-stores)
+| | [รายการ (products/)](#endpoints-รายการ-products)
+| | [ออเดอร์ (orders/)](#endpoints-ออเดอร์-orders)
+
 ## Endpoints ร้านค้า `stores/`
 
 ### `POST /store/create` สร้างร้านใหม่
@@ -173,7 +179,7 @@ GET /product?product_id=1002
 **ตัวอย่าง:**  
 ```json
 {
-  "student_id": 101,
+  "student_id": 68070036,
   "store_id": 1,
   "product_id": 1002
 }
@@ -220,7 +226,7 @@ GET /orders/?order_id=12
 ```json
 {
   "order_id": 12,
-  "student_id": 101,
+  "student_id": 68070036,
   "store_id": 1,
   "product_id": 1002,
   "total_price": 30.0,
@@ -246,7 +252,7 @@ GET /store/orders?store_id=1
 [
   {
     "order_id": 12,
-    "student_id": 101,
+    "student_id": 68070036,
     "store_id": 1, // <-
     "product_id": 1002,
     "total_price": 30.0,
@@ -255,7 +261,7 @@ GET /store/orders?store_id=1
   },
   {
     "order_id": 13,
-    "student_id": 102,
+    "student_id": 68070010,
     "store_id": 1, // <-
     "product_id": 1001,
     "total_price": 60.0,
@@ -274,7 +280,7 @@ GET /store/orders?store_id=1
 
 **ตัวอย่าง:**  
 ```
-GET /student/orders?student_id=101
+GET /student/orders?student_id=68070036
 ```
 
 **ผลลัพธ์:**  
@@ -282,7 +288,7 @@ GET /student/orders?student_id=101
 [
   {
     "order_id": 12,
-    "student_id": 101, // <-
+    "student_id": 68070036, // <-
     "store_id": 1,
     "product_id": 1002,
     "total_price": 30.0,
@@ -291,7 +297,7 @@ GET /student/orders?student_id=101
   },
   {
     "order_id": 15,
-    "student_id": 101, // <-
+    "student_id": 68070036, // <-
     "store_id": 2,
     "product_id": 2001,
     "total_price": 45.0,
