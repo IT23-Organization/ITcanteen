@@ -1,19 +1,22 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // --- Types ------------------------------
 
-type Product struct {
-	ProductID int     `json:"product_id"`
-	Name      string  `json:"name"`
-	Price     float64 `json:"price"`
-}
+// For simplicity, the store ID will be from 0 to 1000 and products will have
+// IDs from storeID * 1000 + 1 to storeID * 1000 + 999.
+// So there will be a maximum of 1000 stores and 999 products per store.
 
 type Store struct {
 	StoreID  int       `json:"store_id"`
@@ -21,32 +24,73 @@ type Store struct {
 	Products []Product `json:"products"`
 }
 
+// nextProductID returns the next available product ID for the store.
+// You can't assign product IDs manually by doing len(products) + 1 because if
+// (non-last) products are deleted, their IDs could be reused and cause
+// conflicts.
+func (s *Store) nextProductID() int {
+	if len(s.Products) == 0 {
+		return s.StoreID*1000 + 1
+	}
+	// Find empty slots
+	usedIDs := make(map[int]bool)
+	for _, product := range s.Products {
+		usedIDs[product.ProductID] = true
+	}
+	for i := 1; i <= len(s.Products)+1; i++ {
+		candidateID := s.StoreID*1000 + i
+		if !usedIDs[candidateID] {
+			return candidateID
+		}
+	}
+	// Should not reach here
+	return s.StoreID*1000 + len(s.Products) + 1
+}
+
+type Product struct {
+	ProductID int `json:"product_id"`
+	// The ID of the store that sells this product.
+	// In theory, we could get the store ID by floor(productID / 1000),
+	// but let's store it explicitly for clarity.
+	StoreID int     `json:"store_id"`
+	Name    string  `json:"name"`
+	Price   float64 `json:"price"`
+}
+
 type Order struct {
 	OrderID int `json:"order_id"`
 	// The ID of the student who made the order.
+	// Not a foreign key to anything.
 	StudentID int `json:"student_id"`
 	// The ID of the store from which the order was made.
 	// Used to look up product prices.
-	StoreID int `json:"store_id"`
-	// List of product IDs in the order.
-	ProductIDs []int   `json:"product_ids"`
+	StoreID    int     `json:"store_id"`
+	ProductID  int     `json:"product_id"`
 	TotalPrice float64 `json:"total_price"`
 	Paid       bool    `json:"paid"`
 	Done       bool    `json:"done"`
 }
 
+// CreateProductRequest is used when adding a new product to a store.
+// It lacks fields that are set by the server.
+type CreateProductRequest struct {
+	StoreID int     `json:"store_id"`
+	Name    string  `json:"name"`
+	Price   float64 `json:"price"`
+}
+
 // CreateOrderRequest is used when creating a new order.
 // It lacks fields that are set by the server.
 type CreateOrderRequest struct {
-	StudentID  int   `json:"student_id"`
-	StoreID    int   `json:"store_id"`
-	ProductIDs []int `json:"product_ids"`
+	StudentID int `json:"student_id"`
+	StoreID   int `json:"store_id"`
+	ProductID int `json:"product_id"`
 }
 
 func (cor *CreateOrderRequest) toOrder(order *Order, orderID int) {
 	order.StudentID = cor.StudentID
 	order.StoreID = cor.StoreID
-	order.ProductIDs = cor.ProductIDs
+	order.ProductID = cor.ProductID
 
 	order.OrderID = orderID
 	order.TotalPrice = 0.0
@@ -80,30 +124,138 @@ var products []Product
 
 var orders []Order
 
-func init() {
-	stores = []Store{
-		{
-			StoreID: 1,
-			Name:    "Foo Store",
-			Products: []Product{
-				{ProductID: 101, Name: "Apple", Price: 1.00},
-				{ProductID: 102, Name: "Banana", Price: 1.50},
-			},
-		},
-		{
-			StoreID: 2,
-			Name:    "Bar Store",
-			Products: []Product{
-				{ProductID: 201, Name: "Orange", Price: 1.50},
-				{ProductID: 202, Name: "Grapes", Price: 2.00},
-			},
-		},
+func initialize() {
+	// Init db
+	db, err := sql.Open("sqlite3", "./data.sqlite")
+	if err != nil {
+		panic(err)
 	}
-	products = []Product{}
+	defer db.Close()
+
+	// Create tables if not exist
+	_, err = db.Exec(`
+	CREATE TABLE IF NOT EXISTS stores (
+		store_id INTEGER PRIMARY KEY,
+		name     TEXT NOT NULL,
+		products TEXT NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS products (
+		product_id INTEGER PRIMARY KEY,
+		store_id   INTEGER NOT NULL,
+		name       TEXT    NOT NULL,
+		price      REAL    NOT NULL,
+		FOREIGN KEY (store_id) REFERENCES stores(store_id)
+	);
+	CREATE TABLE IF NOT EXISTS orders (
+		order_id    INTEGER PRIMARY KEY,
+		student_id  INTEGER NOT NULL,
+		store_id    INTEGER NOT NULL,
+		product_id  INTEGER NOT NULL,
+		total_price REAL    NOT NULL,
+		paid        INTEGER NOT NULL,
+		done        INTEGER NOT NULL,
+		FOREIGN KEY (store_id) REFERENCES stores(store_id)
+	);
+	`)
+
+	if err != nil {
+		panic(err)
+	}
+
+	rows, err := db.Query("SELECT store_id, name, products FROM stores")
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var store Store
+		var productsJSON string
+		err := rows.Scan(&store.StoreID, &store.Name, &productsJSON)
+		if err != nil {
+			panic(err)
+		}
+		err = json.Unmarshal([]byte(productsJSON), &store.Products)
+		if err != nil {
+			panic(err)
+		}
+		stores = append(stores, store)
+	}
+
+	rows, err = db.Query("SELECT order_id, student_id, store_id, product_id, total_price, paid, done FROM orders")
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var order Order
+		var paidInt, doneInt int
+		err := rows.Scan(&order.OrderID, &order.StudentID, &order.StoreID, &order.ProductID, &order.TotalPrice, &paidInt, &doneInt)
+		if err != nil {
+			panic(err)
+		}
+		order.Paid = paidInt != 0
+		order.Done = doneInt != 0
+		orders = append(orders, order)
+	}
+
+	rows, err = db.Query("SELECT product_id, name, price FROM products")
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var product Product
+		err := rows.Scan(&product.ProductID, &product.Name, &product.Price)
+		if err != nil {
+			panic(err)
+		}
+		products = append(products, product)
+	}
+}
+
+func persist() {
+	db, err := sql.Open("sqlite3", "./data.sqlite")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
 	for _, store := range stores {
-		products = append(products, store.Products...)
+		productsJSON, err := json.Marshal(store.Products)
+		if err != nil {
+			panic(err)
+		}
+		_, err = db.Exec("REPLACE INTO stores (store_id, name, products) VALUES (?, ?, ?)", store.StoreID, store.Name, string(productsJSON))
+		if err != nil {
+			panic(err)
+		}
 	}
-	orders = []Order{}
+
+	for _, product := range products {
+		_, err = db.Exec("REPLACE INTO products (product_id, store_id, name, price) VALUES (?, ?, ?, ?)", product.ProductID, product.StoreID, product.Name, product.Price)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	for _, order := range orders {
+		paidInt := 0
+		if order.Paid {
+			paidInt = 1
+		}
+		doneInt := 0
+		if order.Done {
+			doneInt = 1
+		}
+
+		_, err = db.Exec(
+			"REPLACE INTO orders (order_id, student_id, store_id, product_id, total_price, paid, done) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			order.OrderID, order.StudentID, order.StoreID, order.ProductID, order.TotalPrice, paidInt, doneInt,
+		)
+		if err != nil {
+			panic(err)
+		}
+	}
+	db.Close()
 }
 
 func storeGetProducts(storeID int) (bool, []Product) {
@@ -122,71 +274,146 @@ func addOrder(order Order) {
 
 // --- HTTP handlers ------------------------------
 
-// Returns an ok response with a given map of data.
-func okResponse(w http.ResponseWriter, data map[string]any) {
+func jsonResponse(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	response := map[string]interface{}{
-		"ok": "true",
+	w.WriteHeader(status)
+
+	json, err := json.Marshal(data)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
-	for k, v := range data {
-		response[k] = v
-	}
-	json.NewEncoder(w).Encode(response)
+	w.Write(json)
 }
 
-// Returns an (flattened) ok response with a given data object.
-func okResponseWith(w http.ResponseWriter, data any) {
-	w.Header().Set("Content-Type", "application/json")
-
-	raw, err := json.Marshal(data)
-	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+func handleStoreCreate(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		jsonResponse(w, http.StatusBadRequest, "Missing store name")
 		return
 	}
-
-	var obj map[string]interface{}
-	err = json.Unmarshal(raw, &obj)
-	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	if len(stores) >= 1000 {
+		jsonResponse(w, http.StatusBadRequest, "Store limit reached, have we reached that point?")
 		return
 	}
-
-	obj["ok"] = "true"
-
-	final, err := json.Marshal(obj)
-	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
+	newStore := Store{
+		StoreID:  len(stores) + 1,
+		Name:     name,
+		Products: []Product{},
 	}
-
-	w.Write(final)
+	stores = append(stores, newStore)
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"ok":       "true",
+		"store_id": newStore.StoreID,
+	})
 }
 
-func invalidRequestResponse(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	response := map[string]string{
-		"ok":    "false",
-		"error": message,
+func handleStoreDelete(w http.ResponseWriter, r *http.Request) {
+	storeIDStr := r.URL.Query().Get("store_id")
+	storeID, err := strconv.Atoi(storeIDStr)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, "Invalid store_id")
+		return
 	}
-	json.NewEncoder(w).Encode(response)
+	for i, store := range stores {
+		if store.StoreID == storeID {
+			// Remove store
+			stores = append(stores[:i], stores[i+1:]...)
+			jsonResponse(w, http.StatusOK, "bye")
+			return
+		}
+	}
+	jsonResponse(w, http.StatusBadRequest, "Store not found")
+}
+
+func handleStoreAddProduct(w http.ResponseWriter, r *http.Request) {
+	var createProductRequest CreateProductRequest
+	err := json.NewDecoder(r.Body).Decode(&createProductRequest)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, "Invalid product data")
+		return
+	}
+	for i, store := range stores {
+		if store.StoreID == createProductRequest.StoreID {
+			newProduct := Product{
+				ProductID: store.nextProductID(),
+				StoreID:   createProductRequest.StoreID,
+				Name:      createProductRequest.Name,
+				Price:     createProductRequest.Price,
+			}
+			stores[i].Products = append(stores[i].Products, newProduct)
+			products = append(products, newProduct)
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"ok":         "true",
+				"product_id": newProduct.ProductID,
+			})
+			return
+		}
+	}
+	jsonResponse(w, http.StatusBadRequest, "Store not found")
+}
+
+func handleStoreRemoveProduct(w http.ResponseWriter, r *http.Request) {
+	productIDStr := r.URL.Query().Get("product_id")
+	productID, err := strconv.Atoi(productIDStr)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, "Invalid product_id")
+		return
+	}
+	for i, store := range stores {
+		for j, product := range store.Products {
+			if product.ProductID == productID {
+				// Remove product from store
+				stores[i].Products = append(stores[i].Products[:j], stores[i].Products[j+1:]...)
+				// Remove product from global list
+				for k, p := range products {
+					if p.ProductID == productID {
+						products = append(products[:k], products[k+1:]...)
+						break
+					}
+				}
+				jsonResponse(w, http.StatusOK, map[string]any{
+					"ok": "true",
+				})
+				return
+			}
+		}
+	}
+	jsonResponse(w, http.StatusBadRequest, "Product not found")
+}
+
+func handleGetStore(w http.ResponseWriter, r *http.Request) {
+	storeIDStr := r.URL.Query().Get("store_id")
+	storeID, err := strconv.Atoi(storeIDStr)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, "Invalid store_id")
+		return
+	}
+	for _, store := range stores {
+		if store.StoreID == storeID {
+			jsonResponse(w, http.StatusOK, store)
+			return
+		}
+	}
+	jsonResponse(w, http.StatusBadRequest, "Store not found")
 }
 
 func handleGetProduct(w http.ResponseWriter, r *http.Request) {
 	productIDStr := r.URL.Query().Get("product_id")
 	productID, err := strconv.Atoi(productIDStr)
 	if err != nil {
-		invalidRequestResponse(w, "Invalid product_id")
+		jsonResponse(w, http.StatusBadRequest, "Invalid product_id")
 		return
 	}
 	for _, store := range stores {
 		for _, product := range store.Products {
 			if product.ProductID == productID {
-				okResponseWith(w, product)
+				jsonResponse(w, http.StatusOK, product)
 				return
 			}
 		}
 	}
-	invalidRequestResponse(w, "Product not found")
+	jsonResponse(w, http.StatusBadRequest, "Product not found")
 }
 
 func handleGetProductsFromStore(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +428,7 @@ func handleGetProductsFromStore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Store not found", http.StatusNotFound)
 		return
 	}
-	okResponseWith(w, products)
+	jsonResponse(w, http.StatusOK, products)
 }
 
 func handleAddOrder(w http.ResponseWriter, r *http.Request) {
@@ -221,18 +448,21 @@ func handleAddOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Calculate total price
-	for _, productID := range order.ProductIDs {
-		for _, product := range products {
-			if product.ProductID == productID {
-				order.TotalPrice += product.Price
-			}
+	priceFound := false
+	for _, product := range products {
+		if product.ProductID == order.ProductID {
+			order.TotalPrice = product.Price
+			priceFound = true
+			break
 		}
+	}
+	if !priceFound {
+		http.Error(w, "Product not found in store", http.StatusNotFound)
+		return
 	}
 
 	addOrder(order)
-	okResponse(w, map[string]any{
-		"ok": "true",
+	jsonResponse(w, http.StatusOK, map[string]any{
 		"id": order.OrderID,
 	})
 }
@@ -247,7 +477,7 @@ func handleUpdateOrder(w http.ResponseWriter, r *http.Request) {
 	for i, order := range orders {
 		if order.OrderID == updateReq.OrderID {
 			updateReq.applyToOrder(&orders[i])
-			okResponse(w, map[string]any{})
+			jsonResponse(w, http.StatusOK, map[string]any{})
 			return
 		}
 	}
@@ -263,7 +493,7 @@ func handleGetOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, order := range orders {
 		if order.OrderID == orderID {
-			okResponseWith(w, order)
+			jsonResponse(w, http.StatusOK, order)
 			return
 		}
 	}
@@ -283,7 +513,7 @@ func handleGetOrdersForStore(w http.ResponseWriter, r *http.Request) {
 			storeOrders = append(storeOrders, order)
 		}
 	}
-	okResponseWith(w, storeOrders)
+	jsonResponse(w, http.StatusOK, storeOrders)
 }
 
 func handleGetOrdersForStudent(w http.ResponseWriter, r *http.Request) {
@@ -299,20 +529,47 @@ func handleGetOrdersForStudent(w http.ResponseWriter, r *http.Request) {
 			studentOrders = append(studentOrders, order)
 		}
 	}
-	okResponseWith(w, studentOrders)
+	jsonResponse(w, http.StatusOK, studentOrders)
+}
+
+func middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s\n", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {
-	fmt.Println("hello")
-	http.HandleFunc("/product", handleGetProduct)
+	initialize()
 
-	http.HandleFunc("/store/products", handleGetProductsFromStore)
-	http.HandleFunc("/store/orders", handleGetOrdersForStore)
+	// capture ctrl+c to persist data
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		<-c
+		persist()
+		log.Println("bye")
+		os.Exit(0)
+	}()
 
-	http.HandleFunc("/orders/", handleGetOrder)
-	http.HandleFunc("/orders/add", handleAddOrder)
-	http.HandleFunc("/orders/update", handleUpdateOrder)
-	http.HandleFunc("/orders/student", handleGetOrdersForStudent)
+	log.Println("hello")
+	mux := http.NewServeMux()
 
-	http.ListenAndServe(":8080", nil)
+	mux.HandleFunc("/product", handleGetProduct)
+
+	mux.HandleFunc("/store", handleGetStore)
+	mux.HandleFunc("/store/create", handleStoreCreate)
+	mux.HandleFunc("/store/delete", handleStoreDelete)
+	mux.HandleFunc("/store/product", handleGetProductsFromStore)
+	mux.HandleFunc("/store/product/add", handleStoreAddProduct)
+	mux.HandleFunc("/store/product/remove", handleStoreRemoveProduct)
+	mux.HandleFunc("/store/orders", handleGetOrdersForStore)
+
+	mux.HandleFunc("/orders/", handleGetOrder)
+	mux.HandleFunc("/orders/add", handleAddOrder)
+	mux.HandleFunc("/orders/update", handleUpdateOrder)
+	mux.HandleFunc("/orders/student", handleGetOrdersForStudent)
+
+	muxWithMiddleware := middleware(mux)
+	http.ListenAndServe(":8080", muxWithMiddleware)
 }
