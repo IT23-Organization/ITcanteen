@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 
+	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -308,6 +309,7 @@ func handleStoreCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// TODO add User type and check permissions
 func handleStoreDelete(w http.ResponseWriter, r *http.Request) {
 	storeIDStr := r.URL.Query().Get("store_id")
 	storeID, err := strconv.Atoi(storeIDStr)
@@ -477,7 +479,9 @@ func handleUpdateOrder(w http.ResponseWriter, r *http.Request) {
 	for i, order := range orders {
 		if order.OrderID == updateReq.OrderID {
 			updateReq.applyToOrder(&orders[i])
-			jsonResponse(w, http.StatusOK, map[string]any{})
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"ok": "true",
+			})
 			return
 		}
 	}
@@ -553,23 +557,23 @@ func main() {
 	}()
 
 	log.Println("hello")
-	mux := http.NewServeMux()
+	router := mux.NewRouter()
 
-	mux.HandleFunc("/product", handleGetProduct)
+	router.HandleFunc("/store", handleGetStore).Methods("GET")
+	router.HandleFunc("/store/create", handleStoreCreate).Methods("POST")
+	router.HandleFunc("/store/delete", handleStoreDelete)
+	router.HandleFunc("/store/product", handleGetProductsFromStore)
+	router.HandleFunc("/store/product/add", handleStoreAddProduct)
+	router.HandleFunc("/store/product/remove", handleStoreRemoveProduct)
+	router.HandleFunc("/store/orders", handleGetOrdersForStore)
 
-	mux.HandleFunc("/store", handleGetStore)
-	mux.HandleFunc("/store/create", handleStoreCreate)
-	mux.HandleFunc("/store/delete", handleStoreDelete)
-	mux.HandleFunc("/store/product", handleGetProductsFromStore)
-	mux.HandleFunc("/store/product/add", handleStoreAddProduct)
-	mux.HandleFunc("/store/product/remove", handleStoreRemoveProduct)
-	mux.HandleFunc("/store/orders", handleGetOrdersForStore)
+	router.HandleFunc("/product", handleGetProduct)
 
-	mux.HandleFunc("/orders/", handleGetOrder)
-	mux.HandleFunc("/orders/add", handleAddOrder)
-	mux.HandleFunc("/orders/update", handleUpdateOrder)
-	mux.HandleFunc("/orders/student", handleGetOrdersForStudent)
+	router.HandleFunc("/orders/", handleGetOrder)
+	router.HandleFunc("/orders/add", handleAddOrder)
+	router.HandleFunc("/orders/update", handleUpdateOrder)
+	router.HandleFunc("/orders/student", handleGetOrdersForStudent)
 
-	muxWithMiddleware := middleware(mux)
-	http.ListenAndServe(":8080", muxWithMiddleware)
+	loggedRouter := middleware(router)
+	http.ListenAndServe(":8080", loggedRouter)
 }
