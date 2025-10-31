@@ -386,6 +386,12 @@ func handleStoreRemoveProduct(w http.ResponseWriter, r *http.Request) {
 
 func handleGetStore(w http.ResponseWriter, r *http.Request) {
 	storeIDStr := r.URL.Query().Get("store_id")
+
+	if storeIDStr == "" {
+		jsonResponse(w, http.StatusOK, stores)
+		return
+	}
+
 	storeID, err := strconv.Atoi(storeIDStr)
 	if err != nil {
 		jsonResponse(w, http.StatusBadRequest, "Invalid store_id")
