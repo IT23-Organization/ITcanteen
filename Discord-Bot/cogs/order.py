@@ -2,129 +2,282 @@ import discord
 from discord.ext import commands
 import aiohttp
 import asyncio
+import re
 
 # --- ⚙️ ตั้งค่า (แก้ตรงนี้) ---
-BASE_API_URL = "http://localhost:8080" 
-STORE_ID = 1  # 2. ใส่ ID ของร้านค้า
-TICKET_CHANNEL_PREFIX = "ticket-" # ⭐️ 3. ใส่ "คำนำหน้า" ของช่อง Ticket ที่บอทจะโพสต์เมนู
+BASE_API_URL = "http://localhost:8080" # 1. API ของคุณ
+TICKET_CHANNEL_PREFIX = "ticket-"      # 2. คำนำหน้าช่องทิกเก็ต
+TICKET_TOOL_BOT_NAME = "Ticket Tool"   # 3. ชื่อบอทที่สร้างทิกเก็ต
+# ---------------------------------
 
-# ---------------------------------------------------------------------
-# 1. สร้างคลาส Cog
-# ---------------------------------------------------------------------
 class OrderCog(commands.Cog):
     
-    # -----------------------------------------------------------------
-    # 2. ฟังก์ชัน __init__
-    # -----------------------------------------------------------------
     def __init__(self, bot):
         self.bot = bot
-        self.restaurant_data = {
-            "name": f"ร้าน ID {STORE_ID} (กำลังโหลด...)",
-            "menu": {}  # { "ชื่อพิมพ์เล็ก": { id, price, original_name, note } }
-        }
-        self.fetch_task = self.bot.loop.create_task(self.fetch_restaurant_data())
+        self.api_base_url = BASE_API_URL
+        self.ticket_prefix = TICKET_CHANNEL_PREFIX
+        
+        # --- ตัวแปรสำหรับเก็บข้อมูล ---
+        
+        # 1. เก็บรายชื่อร้านค้าทั้งหมด
+        #    { 1: "โคเจ", 2: "ร้านป้า" }
+        self.stores_cache = {}
+        
+        # 2. เก็บเมนูของร้านที่เคยโหลดแล้ว
+        #    { 1: { "กะเพรา": { id: 101, ... }, "ไข่เจียว": { id: 102, ... } } }
+        self.menu_cache = {}
+        
+        # 3. (สำคัญ) เก็บว่าช่องทิกเก็ตนี้ "เลือกร้านอะไรอยู่"
+        #    { channel_id_1: { "store_id": 1, "store_name": "โคเจ" },
+        #      channel_id_2: { "store_id": 2, "store_name": "ร้านป้า" } }
+        self.channel_states = {}
+
+        # สั่งให้บอทเริ่มดึงรายชื่อร้านค้าทั้งหมดทันทีที่เปิด
+        self.store_fetch_task = self.bot.loop.create_task(self.fetch_all_stores())
 
     # -----------------------------------------------------------------
-    # 3. (อัปเดต) ฟังก์ชันดึง API
+    # (ใหม่) 1. ฟังก์ชันดึง "รายชื่อร้านค้าทั้งหมด"
     # -----------------------------------------------------------------
-    async def fetch_restaurant_data(self):
+    async def fetch_all_stores(self):
         """
-        ดึงข้อมูลร้านและเมนูจาก API
+        (API: GET /store) ดึงรายชื่อร้านค้าทั้งหมดมาเก็บไว้ใน cache
         """
-        await self.bot.wait_until_ready() 
+        await self.bot.wait_until_ready()
+        endpoint = f"{self.api_base_url}/store" #
         
-        store_info_endpoint = f"{BASE_API_URL}/store?store_id={STORE_ID}"
-        
-        # ⭐️ (ปรับ) แก้ไขกลับเป็น "products" ให้ถูกต้อง
-        menu_endpoint = f"{BASE_API_URL}/store/product?store_id={STORE_ID}" 
-
-        async with aiohttp.ClientSession() as session:
-            try:
-                # --- 1. ดึงชื่อร้าน ---
-                print(f"[OrderCog] กำลังดึงชื่อร้านจาก: {store_info_endpoint}")
-                async with session.get(store_info_endpoint) as response:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(endpoint) as response:
                     if response.status == 200:
-                        data = await response.json()
-                        self.restaurant_data["name"] = data.get("name", f"ร้าน ID {STORE_ID}")
-                        print(f"✅ [OrderCog] ได้ชื่อร้าน: {self.restaurant_data['name']}")
+                        stores_list = await response.json()
+                        # เคลียร์ cache เก่าและสร้างใหม่
+                        self.stores_cache.clear()
+                        for store in stores_list:
+                            self.stores_cache[store.get("store_id")] = store.get("name")
+                        print(f"[OrderCog] ✅ โหลดรายชื่อร้านค้าสำเร็จ: {len(self.stores_cache)} ร้าน")
                     else:
-                        print(f"❌ [OrderCog] ไม่สามารถดึงชื่อร้านได้ (Status: {response.status})")
+                        print(f"❌ [OrderCog] ไม่สามารถดึงรายชื่อร้านค้าได้ (Status: {response.status})")
+        except Exception as e:
+            print(f"❌ [OrderCog] เกิด Error ตอนดึงรายชื่อร้านค้า: {e}")
 
-                # --- 2. ดึงเมนู ---
-                print(f"[OrderCog] กำลังดึงเมนูจาก: {menu_endpoint}")
-                async with session.get(menu_endpoint) as response:
+    # -----------------------------------------------------------------
+    # (ใหม่) 2. ฟังก์ชันดึง "เมนูของร้านที่เลือก"
+    # -----------------------------------------------------------------
+    async def fetch_store_menu(self, store_id: int):
+        """
+        (API: GET /store/product) ดึงเมนูของร้านที่ระบุ
+        """
+        # ถ้ามีใน cache แล้ว ให้ใช้ซ้ำ
+        if store_id in self.menu_cache:
+            return self.menu_cache[store_id]
+            
+        endpoint = f"{self.api_base_url}/store/product?store_id={store_id}" #
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(endpoint) as response:
                     if response.status == 200:
-                        raw_products = await response.json() 
+                        products_list = await response.json()
                         new_menu = {}
-                        
-                        for item in raw_products:
+                        for item in products_list:
                             food_name = item.get("name")
                             if food_name:
-                                food_name_lower = food_name.lower()
-                                new_menu[food_name_lower] = {
+                                new_menu[food_name.lower().strip()] = {
                                     "id": item.get("product_id"),
                                     "price": item.get("price"),
-                                    "original_name": food_name,
-                                    "note": item.get("note", "") 
+                                    "original_name": food_name
                                 }
-                        
-                        self.restaurant_data["menu"] = new_menu
-                        print(f"✅ [OrderCog] โหลดเมนูสำเร็จ: {len(self.restaurant_data['menu'])} รายการ")
+                        # เก็บเข้า cache
+                        self.menu_cache[store_id] = new_menu
+                        print(f"[OrderCog] ✅ โหลดเมนูร้าน ID {store_id} สำเร็จ: {len(new_menu)} รายการ")
+                        return new_menu
                     else:
-                        print(f"❌ [OrderCog] Error: ไม่สามารถดึงข้อมูลเมนูได้ (Status: {response.status})")
-                        self.restaurant_data["menu"] = {}
-            
-            except Exception as e:
-                print(f"❌ [OrderCog] Error: เชื่อมต่อ API ล้มเหลว (เช็คว่า API รันอยู่?) : {e}")
-                self.restaurant_data["menu"] = {}
+                        print(f"❌ [OrderCog] ไม่สามารถดึงเมนูร้าน ID {store_id} (Status: {response.status})")
+                        return None
+        except Exception as e:
+            print(f"❌ [OrderCog] เกิด Error ตอนดึงเมนู: {e}")
+            return None
 
     # -----------------------------------------------------------------
-    # 4. คำสั่ง !order ( ⭐️⭐️⭐️ แก้ไขตรงนี้ ⭐️⭐️⭐️ )
+    # (ใหม่) 3. ฟังก์ชันแยก "ชื่อเมนู" และ "หมายเหตุ"
     # -----------------------------------------------------------------
-    @commands.command()
-    async def order(self, ctx, *, item_name_str: str): # ⭐️ (ปรับ) เปลี่ยนชื่อตัวแปร
+    def parse_order_string(self, text: str):
         """
-        ⭐️ (ปรับ) รับออเดอร์อาหาร (รับทีละ 1 รายการ)
-        ตัวอย่าง: !order กะเพรา
+        แยก "กะเพรา (ไข่ดาว)" ออกเป็น ("กะเพรา", "ไข่ดาว")
         """
+        pattern = r"(.*?)\s*\((.*?)\)$"
+        match = re.search(pattern, text)
         
-        if not self.restaurant_data["menu"]:
-            await ctx.send(f"ขออภัยครับ ร้าน **{self.restaurant_data['name']}** กำลังปิดปรับปรุง (โหลดเมนูไม่สำเร็จ)")
+        if match:
+            menu_name = match.group(1).strip()
+            note = match.group(2).strip()
+            return menu_name, note
+        else:
+            menu_name = text.strip()
+            return menu_name, None
+
+    # -----------------------------------------------------------------
+    # (แก้ไข) 4. Listener: ทำงานเมื่อเปิดทิกเก็ต (Requirement 1)
+    # -----------------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # 1. ถ้าเป็นข้อความจากบอทตัวเอง ให้เมิน
+        if message.author == self.bot:
             return
 
-        # ⭐️ (ปรับ) ไม่ต้อง split(',') และไม่ต้องใช้ loop
-        
-        product_id_to_send = None   
-        item_name_to_display = ""  
-        
-        cleaned_name = item_name_str.lower().strip() 
-        
-        if cleaned_name in self.restaurant_data["menu"]:
-            food_details = self.restaurant_data["menu"][cleaned_name]
-            product_id_to_send = food_details["id"]
+        # 2. (Requirement 1) ตรวจสอบข้อความต้อนรับจาก Ticket Tool
+        if message.author.bot and message.author.name == TICKET_TOOL_BOT_NAME and message.embeds:
             
-            # ⭐️ (ปรับ) สร้างชื่อที่จะแสดงผล (รวม note)
-            name = food_details["original_name"]
-            note = food_details.get("note", "")
-            note_display = f" ({note})" if note else ""
-            item_name_to_display = f"{name}{note_display}"
-        
-        # ⭐️ (ปรับ) ตรวจสอบว่าหาเมนูเจอหรือไม่
-        if not product_id_to_send:
-            await ctx.send(f"❌ ขออภัยครับ ไม่พบรายการ: **{item_name_str.strip()}**")
+            # ถ้ายังโหลดรายชื่อร้านไม่เสร็จ (เช่น บอทเพิ่งเปิด)
+            if not self.stores_cache:
+                await message.channel.send("🔄 กำลังโหลดรายชื่อร้านค้าสักครู่...")
+                await self.fetch_all_stores() # บังคับโหลดใหม่
+
+            if not self.stores_cache:
+                await message.channel.send("❌ ขออภัย, ไม่สามารถติดต่อ API เพื่อดึงรายชื่อร้านค้าได้")
+                return
+
+            # สร้าง List รายชื่อร้าน
+            store_list_str = ""
+            for store_id, store_name in self.stores_cache.items():
+                store_list_str += f"• **{store_name}**\n"
+            
+            response_message = (
+                "ยินดีต้อนรับครับ! กรุณาเลือกร้านอาหารที่ต้องการ:\n"
+                f"{store_list_str}\n"
+                "**วิธีเลือก:** พิมพ์ `!menu <ชื่อร้านอาหาร>` (เช่น `!menu โคเจ`)"
+            )
+            
+            await message.channel.send(response_message)
+            return
+
+        # 3. ถ้าเป็นบอทตัวอื่น (ที่ไม่ใช่ Ticket Tool) ให้เมิน
+        if message.author.bot:
             return
             
-        order_endpoint = f"{BASE_API_URL}/orders/add"
-        student_id = ctx.author.id 
+        # 4. ถ้าข้อความจากคน (ที่ไม่ใช่คำสั่ง) ให้เมินไปเลย
+        # (เราจะใช้เฉพาะคำสั่ง !menu และ !order เท่านั้น)
+        pass
+
+    # -----------------------------------------------------------------
+    # (แก้ไข) 5. คำสั่ง !menu (Requirement 2)
+    # -----------------------------------------------------------------
+    @commands.command(name="menu")
+    async def menu_cmd(self, ctx: commands.Context, *, store_name: str = None):
         
-        # ⭐️ (ปรับ) สร้าง payload ให้ส่ง "product_id" (ไม่ใช่ "products_id")
+        # ต้องอยู่ในช่องทิกเก็ตเท่านั้น
+        if not ctx.channel.name.startswith(self.ticket_prefix):
+            return
+
+        if store_name is None:
+            await ctx.send("กรุณาระบุชื่อร้านครับ. เช่น `!menu โคเจ`")
+            return
+            
+        # ค้นหาร้านจาก cache
+        found_store = None
+        search_name = store_name.lower().strip()
+        
+        for store_id, name in self.stores_cache.items():
+            if search_name == name.lower():
+                found_store = {"id": store_id, "name": name}
+                break
+        
+        if not found_store:
+            await ctx.send(f"❌ ไม่พบร้านอาหารชื่อ: `{store_name}`")
+            return
+            
+        store_id = found_store["id"]
+        store_name = found_store["name"]
+
+        # (สำคัญ) "ล็อก" ช่องนี้ไว้กับร้านนี้
+        self.channel_states[ctx.channel.id] = {"store_id": store_id, "store_name": store_name}
+        
+        await ctx.send(f"กำลังดึงเมนูร้าน **{store_name}**...")
+        
+        # ดึงเมนู (จาก API หรือ cache)
+        menu_data = await self.fetch_store_menu(store_id)
+        
+        if not menu_data:
+            await ctx.send(f"❌ ขออภัย, ไม่สามารถดึงเมนูร้าน **{store_name}** ได้ในขณะนี้")
+            return
+            
+        # สร้าง Embed เมนู
+        menu_display_list = []
+        for item in menu_data.values():
+            menu_display_list.append(f"- **{item['original_name']}** (ราคา {item['price']} บาท)")
+
+        menu_text = "\n".join(menu_display_list)
+        
+        embed = discord.Embed(
+            title=f"📋 เมนูร้าน {store_name}",
+            description=menu_text,
+            color=discord.Color.blue()
+        )
+        
+        # (Requirement 2) เพิ่มตัวอย่างวิธีสั่ง
+        example_name = list(menu_data.values())[0]['original_name'] # เอาชื่อเมนูแรกมาเป็นตัวอย่าง
+        embed.add_field(
+            name="💡 วิธีสั่งอาหาร",
+            value=f"พิมพ์ `!order {example_name}`\n"
+                  f"หรือ `!order {example_name} (เพิ่มไข่ดาว)`",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+
+    # -----------------------------------------------------------------
+    # (ใหม่) 6. คำสั่ง !order (Requirement 3)
+    # -----------------------------------------------------------------
+    @commands.command(name="order")
+    async def order_cmd(self, ctx: commands.Context, *, order_string: str = None):
+        
+        # ต้องอยู่ในช่องทิกเก็ตเท่านั้น
+        if not ctx.channel.name.startswith(self.ticket_prefix):
+            return
+
+        if order_string is None:
+            await ctx.send("กรุณาระบุเมนูที่ต้องการสั่งครับ. เช่น `!order กะเพรา`")
+            return
+            
+        # 1. เช็กว่าเลือกร้านหรือยัง
+        channel_state = self.channel_states.get(ctx.channel.id)
+        if not channel_state:
+            await ctx.send("กรุณาเลือกร้านก่อนครับ พิมพ์ `!menu <ชื่อร้าน>`")
+            return
+            
+        store_id = channel_state["store_id"]
+        store_name = channel_state["store_name"]
+
+        # 2. แยกชื่อเมนูและหมายเหตุ (Requirement 3)
+        food_name, note = self.parse_order_string(order_string)
+        
+        # 3. ค้นหา product_id จากเมนูใน cache
+        menu_data = self.menu_cache.get(store_id)
+        if not menu_data:
+            # เกิดกรณีนี้ได้ถ้าบอท restart แต่ state ไม่หาย
+            await ctx.send("เกิดข้อผิดพลาด, กรุณาพิมพ์ `!menu` ใหม่อีกครั้งครับ")
+            return
+
+        food_details = menu_data.get(food_name.lower())
+        
+        if not food_details:
+            await ctx.send(f"❌ ไม่พบเมนู: **{food_name}** ในร้าน {store_name}")
+            return
+            
+        product_id = food_details["id"]
+        original_name = food_details["original_name"]
+
+        # 4. ส่งออเดอร์ไปที่ API (Requirement 3)
+        order_endpoint = f"{self.api_base_url}/orders/add" #
         payload = {
-            "student_id": student_id,
-            "store_id": STORE_ID,
-            "product_id": product_id_to_send # ⭐️ ส่ง ID เดียว
+            "student_id": ctx.author.id,
+            "store_id": store_id,
+            "product_id": product_id
+            # (หมายเหตุ: API MANUAL_th.md ไม่มีช่องสำหรับ "note"
+            #  ดังนั้นเราจะส่งแค่ product_id แต่จะแสดง "note" ให้ลูกค้ายืนยันเอง)
         }
-
-        print(f"payload: {payload}")  # Debug: แสดง payload ที่จะส่ง
+        
+        await ctx.send("...กำลังส่งออเดอร์... 🚀")
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -132,19 +285,24 @@ class OrderCog(commands.Cog):
                     
                     if response.status == 200:
                         response_data = await response.json()
-                        order_id = response_data.get("id", "N/A") 
+                        order_id = response_data.get("id", "N/A")
+                        queue_number = response_data.get("queue_number", "N/A") #
                         
-                        # 1. ดึง "เลขคิว" (queue_number) จาก API response
-                        queue_number = response_data.get("queue_number", "N/A")
-                        
-                        # 2. เพิ่มการแสดงผล queue_number ในข้อความ
-                        await ctx.send(
-                            f"✅ **รับออเดอร์เรียบร้อยครับ!**\n"
-                            # ⭐️ (ปรับ) แสดงชื่อเมนูที่หาเจอแค่ชื่อเดียว
-                            f"**รายการ:** {item_name_to_display}\n"
-                            f"**เลขที่ออเดอร์:** `{order_id}`\n"
-                            f"**🔔 คุณได้คิวที่: {queue_number}**" 
+                        # (Requirement 3) แสดงผลสรุป
+                        title = "✅ รับออเดอร์เรียบร้อย!"
+                        desc = (
+                            f"**ร้าน:** {store_name}\n"
+                            f"**รายการ:** {original_name}\n"
                         )
+                        if note:
+                            desc += f"**หมายเหตุ:** {note}\n"
+                        
+                        desc += f"\n**เลขที่ออเดอร์:** `{order_id}`\n"
+                        desc += f"**🔔 คุณได้คิวที่: {queue_number}**"
+                        
+                        embed = discord.Embed(title=title, description=desc, color=discord.Color.green())
+                        await ctx.send(embed=embed)
+                        
                     else:
                         error_text = await response.text()
                         await ctx.send(f"❌ เกิดข้อผิดพลาดในการส่งออเดอร์ (Status: {response.status})\n`{error_text}`")
@@ -153,129 +311,21 @@ class OrderCog(commands.Cog):
             await ctx.send(f"❌ เกิดข้อผิดพลาดรุนแรงในการเชื่อมต่อ API: {e}")
 
     # -----------------------------------------------------------------
-    # ⭐️ 5. ฟังก์ชัน Helper สำหรับสร้าง Embed เมนู ( ⭐️⭐️⭐️ แก้ไขตรงนี้ ⭐️⭐️⭐️ )
-    # -----------------------------------------------------------------
-    async def _create_menu_embed(self):
-        """
-        (Helper) สร้าง Embed เมนูอาหาร (แยก Logic มาจาก !menu)
-        จะคืนค่าเป็น Embed object หรือ None (ถ้าไม่มีเมนู)
-        """
-        if not self.restaurant_data["menu"]:
-            return None # คืนค่า None ถ้าไม่มีเมนู
-
-        menu_display_list = []
-        example_items = [] 
-        
-        # วนลูปเพื่อสร้างลิสต์เมนู และดึงชื่อตัวอย่าง
-        for i, food_details in enumerate(self.restaurant_data["menu"].values()):
-            name = food_details["original_name"]
-            price = food_details["price"]
-            note = food_details.get("note", "") 
-            note_display = f" ({note})" if note else "" 
-            menu_display_list.append(f"- **{name}**{note_display} (ราคา {price} บาท)")
-            
-            # เก็บชื่อตัวอย่าง (แค่ชื่อแรกก็พอ)
-            if i < 1: # ⭐️ (ปรับ) เอาแค่ 1 ชื่อ
-                example_items.append(name)
-
-        menu_text = "\n".join(menu_display_list)
-        
-        # สร้าง Embed (เหมือนเดิม)
-        embed = discord.Embed(
-            title=f"📋 เมนูร้าน {self.restaurant_data['name']}",
-            description=menu_text,
-            color=discord.Color.green() # เปลี่ยนสีได้ตามชอบ
-        )
-        
-        # ⭐️ (ปรับ) แก้ไขตัวอย่างการสั่งให้เป็นแบบเมนูเดียว
-        if example_items:
-            example_order_str = example_items[0] # ⭐️ เอาแค่ชื่อแรก
-            embed.add_field(
-                name="💡 ตัวอย่างการสั่งอาหาร",
-                value=f"พิมพ์ `!order {example_order_str}`", # ⭐️ ลบส่วน (,) ออก
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="💡 ตัวอย่างการสั่งอาหาร",
-                value="พิมพ์ `!order <ชื่ออาหาร>`",
-                inline=False
-            )
-        
-        return embed # คืนค่า Embed ที่สร้างเสร็จ
-
-    # -----------------------------------------------------------------
-    # ⭐️ (ปรับ) 6. คำสั่ง !menu (เหมือนเดิม)
-    # -----------------------------------------------------------------
-    @commands.command()
-    async def menu(self, ctx):
-        """
-        แสดงเมนูอาหารทั้งหมดที่ดึงมาจาก API
-        """
-        embed = await self._create_menu_embed() # ⭐️ เรียกใช้ Helper
-        
-        if embed:
-            await ctx.send(embed=embed) # ส่งเป็น embed
-        else:
-            await ctx.send("ขออภัยครับ ยังไม่มีข้อมูลเมนูในตอนนี้")
-
-    # --- 🔁 คำสั่ง !reload (เหมือนเดิม) ---
-    @commands.command()
-    @commands.is_owner()
-    async def reload(self, ctx):
-        """
-        บังคับให้บอทดึงข้อมูล API ใหม่
-        """
-        await ctx.send("🔄 กำลังโหลดข้อมูลร้านและเมนูใหม่...")
-        await self.fetch_restaurant_data()
-        await ctx.send(f"✅ โหลดข้อมูลร้าน **{self.restaurant_data['name']}** ใหม่เรียบร้อย!")
-
-    # -----------------------------------------------------------------
-    # ⭐️ (เพิ่ม) 7. Event Listener ดักฟังตอนสร้างช่อง (เหมือนเดิม)
+    # (ใหม่) 7. ฟังก์ชันล้าง state เมื่อปิดทิกเก็ต
     # -----------------------------------------------------------------
     @commands.Cog.listener()
-    async def on_guild_channel_create(self, channel):
-        """
-        ทำงานอัตโนมัติเมื่อมีช่องใหม่ถูกสร้างขึ้นใน Server
-        """
-        # 1. เช็คว่าช่องที่สร้างเป็น Text Channel หรือไม่
-        if not isinstance(channel, discord.TextChannel):
-            return
-            
-        # 2. เช็คว่าชื่อช่องตรงกับที่เราตั้งค่าไว้หรือไม่ (เช่น "ticket-001")
-        if channel.name.startswith(TICKET_CHANNEL_PREFIX):
-            
-            print(f"[OrderCog] ตรวจพบช่อง Ticket ใหม่: {channel.name}. กำลังส่งเมนู...")
-            
-            # 3. หน่วงเวลาเล็กน้อย (เผื่อบอท Ticket ยังตั้งค่า permission ไม่เสร็จ)
-            await asyncio.sleep(1) 
-            
-            # 4. เรียกใช้ Helper เพื่อสร้าง Embed
-            embed = await self._create_menu_embed()
-            
-            # 5. ส่ง Embed
-            if embed:
-                try:
-                    await channel.send(
-                        f"ยินดีต้อนรับครับ! นี่คือเมนูของร้าน **{self.restaurant_data['name']}**\n"
-                        # ⭐️ (ปรับ) แก้ข้อความต้อนรับใน Ticket ให้ตรง
-                        "คุณสามารถพิมพ์ `!order <ชื่ออาหาร>` เพื่อสั่งได้เลยครับ"
-                    )
-                    await channel.send(embed=embed)
-                except discord.errors.Forbidden:
-                    print(f"❌ [OrderCog] ไม่มีสิทธิ์ส่งข้อความในช่อง {channel.name}")
-            else:
-                # กรณีเมนูโหลดไม่สำเร็จ
-                try:
-                    await channel.send(f"ขออภัยครับ ร้าน **{self.restaurant_data['name']}** กำลังปิดปรับปรุง (โหลดเมนูไม่สำเร็จ)")
-                except discord.errors.Forbidden:
-                    print(f"❌ [OrderCog] ไม่มีสิทธิ์ส่งข้อความในช่อง {channel.name}")
+    async def on_guild_channel_delete(self, channel):
+        if channel.id in self.channel_states:
+            try:
+                del self.channel_states[channel.id]
+                print(f"[OrderCog] ล้าง State ของช่อง {channel.name} (ID: {channel.id}) ที่ถูกปิดแล้ว")
+            except KeyError:
+                pass # ไม่เป็นไรถ้ามันหายไปก่อนแล้ว
 
 
-# ---------------------------------------------------------------------
-# 5. ฟังก์ชัน setup (ประตูทางเข้า)
-# ---------------------------------------------------------------------
+# -----------------------------------------------------------------
+# 8. ฟังก์ชัน setup (ประตูทางเข้า)
+# -----------------------------------------------------------------
 async def setup(bot):
     await bot.add_cog(OrderCog(bot))
-    # ⭐️ (ปรับ) อัปเดตชื่อเวอร์ชัน
-    print("[OrderCog] Cog 'order' (v6 - Single Order Only) has been loaded.")
+    print("[OrderCog] Cog 'OrderCog' (v_MultiStore_API) has been loaded.")
