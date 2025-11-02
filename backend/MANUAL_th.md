@@ -2,7 +2,7 @@
 
 | | |
 |-|-|
-| Jump to | [ร้านค้า (stores)](#endpoints-ร้านค้า-stores
+| Jump to | [ร้านค้า (store/)](#endpoints-ร้านค้า-store)
 | | [รายการ (products/)](#endpoints-รายการ-products)
 | | [ออเดอร์ (orders/)](#endpoints-ออเดอร์-orders)
 
@@ -12,7 +12,7 @@
 | 🟢 | สำหรับนักเรียน
 | 🔵 | สำหรับคนขาย (อาจจะมีบาง field ที่คนขายต้องกรอก)
 
-## Endpoints ร้านค้า `stores`
+## Endpoints ร้านค้า `store`
 
 ### 🔵 `POST /store/create` สร้างร้านใหม่
 | | |
@@ -49,6 +49,7 @@ GET /store?store_id=1
 {
   "store_id": 1,
   "name": "โคเจ",
+  "image_url": "https://example.com/store.jpg",
   "products": [
     {
       "product_id": 1001,
@@ -77,11 +78,13 @@ GET /store
   {
     "store_id": 1,
     "name": "โคเจ",
+    "image_url": "...",
     "products": [...]
   },
   {
     "store_id": 2,
     "name": "ชาบูชิ",
+    "image_url": "...",
     "products": [...]
   },
   ...
@@ -120,7 +123,8 @@ POST /store/delete?store_id=1
 {
   "store_id": 1,
   "name": "ชาเย็น",
-  "price": 25.0
+  "price": 25.0,
+  "image_url": "https://example.com/milk_tea.jpg"
 }
 ```
 
@@ -164,8 +168,20 @@ GET /store/product?store_id=1
 **ผลลัพธ์:**
 ```json
 [
-  { "product_id": 1001, "store_id": 1, "name": "ชาเย็น", "price": 25.0 },
-  { "product_id": 1002, "store_id": 1, "name": "กาแฟเย็น", "price": 30.0 }
+  {
+    "product_id": 1001,
+    "store_id": 1,
+    "name": "ชาเย็น",
+    "price": 25.0,
+    "image_url": "https://example.com/milk_tea.jpg"
+  },
+  {
+    "product_id": 1002,
+    "store_id": 1,
+    "name": "กาแฟเย็น",
+    "price": 30.0,
+    "image_url": "https://example.com/iced_coffee.jpg"
+  }
 ]
 ```
 
@@ -189,7 +205,8 @@ GET /product?product_id=1002
   "product_id": 1002,
   "store_id": 1,
   "name": "กาแฟเย็น",
-  "price": 30.0
+  "price": 30.0,
+  "image_url": "https://example.com/iced_coffee.jpg"
 }
 ```
 
@@ -250,7 +267,7 @@ GET /product?product_id=1002
 GET /orders/?order_id=12
 ```
 
-**ผลลัพธ์:**  
+**ผลลัพธ์:**
 ```json
 {
   "order_id": 12,

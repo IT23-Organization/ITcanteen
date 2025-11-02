@@ -22,6 +22,7 @@ import (
 type Store struct {
 	StoreID  int       `json:"store_id"`
 	Name     string    `json:"name"`
+	ImageURL string    `json:"image_url"`
 	Products []Product `json:"products"`
 }
 
@@ -53,9 +54,10 @@ type Product struct {
 	// The ID of the store that sells this product.
 	// In theory, we could get the store ID by floor(productID / 1000),
 	// but let's store it explicitly for clarity.
-	StoreID int     `json:"store_id"`
-	Name    string  `json:"name"`
-	Price   float64 `json:"price"`
+	StoreID  int     `json:"store_id"`
+	Name     string  `json:"name"`
+	Price    float64 `json:"price"`
+	ImageURL string  `json:"image_url"`
 }
 
 type Order struct {
@@ -75,9 +77,10 @@ type Order struct {
 // CreateProductRequest is used when adding a new product to a store.
 // It lacks fields that are set by the server.
 type CreateProductRequest struct {
-	StoreID int     `json:"store_id"`
-	Name    string  `json:"name"`
-	Price   float64 `json:"price"`
+	StoreID  int     `json:"store_id"`
+	Name     string  `json:"name"`
+	Price    float64 `json:"price"`
+	ImageURL string  `json:"image_url"`
 }
 
 // CreateOrderRequest is used when creating a new order.
