@@ -568,6 +568,11 @@ func handleGetOrdersForStudent(w http.ResponseWriter, r *http.Request) {
 
 func middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
 		log.Printf("%s %s\n", r.Method, r.URL.Path)
 		next.ServeHTTP(w, r)
 	})
@@ -599,7 +604,7 @@ func main() {
 
 	router.HandleFunc("/product", handleGetProduct)
 
-	router.HandleFunc("/orders/", handleGetOrder)
+	router.HandleFunc("/orders", handleGetOrder)
 	router.HandleFunc("/orders/add", handleAddOrder)
 	router.HandleFunc("/orders/update", handleUpdateOrder)
 	router.HandleFunc("/orders/student", handleGetOrdersForStudent)

@@ -3,64 +3,41 @@
 import React, { useState } from "react";
 import Link from "next/link";
 
-type Order = {
-  id: string;
-  img: string;
-  menu: string;
-  user: string;
-  time: string;
-  note: string;
-  price: number;
-};
+type OrderDisplay = {
+  student_id: number;
+  product_name: string;
+  total_price: number;
+  paid: boolean;
+  done: boolean;
+}
 
-const orders: Order[] = [
-  {
-    id: "#A001",
-    img: "./assets/Mama_instant_noodle_block.jpg",
-    menu: "NOODLE",
-    user: "68070070",
-    time: "10:00 PM",
-    note: "PI SED SAI JAI",
-    price: 50,
-  },
-  {
-    id: "#A002",
-    img: "./assets/ChatGPT Image 13 ส.ค. 2568 21_21_57.png",
-    menu: "NOODLE",
-    user: "68070071",
-    time: "10:10 PM",
-    note: "EXTRA SPICY",
-    price: 50,
-  },
-  {
-    id: "#A003",
-    img: "./assets/Mama_instant_noodle_block.jpg",
-    menu: "NOODLE",
-    user: "68070072",
-    time: "10:20 PM",
-    note: "NO VEGETABLE",
-    price: 50,
-  },
-  {
-    id: "#A004",
-    img: "./assets/Mama_instant_noodle_block.jpg",
-    menu: "NOODLE",
-    user: "68070073",
-    time: "10:30 PM",
-    note: "ADD EGG",
-    price: 50,
-  },
-  {
-    id: "#A005",
-    img: "./assets/Mama_instant_noodle_block.jpg",
-    menu: "NOODLE",
-    user: "68070074",
-    time: "10:40 PM",
-    note: "NO SOUP",
-    price: 50,
-  },
-  // เพิ่ม orders ได้อีก
-];
+const orders: OrderDisplay[] = [];
+
+const fetchOrders = async () => {
+  try {
+    const response = await fetch("http://localhost:8080/store/orders?store_id=1");
+    const data = await response.json();
+
+    // fetch each order's product name
+    const ordersDisplay: OrderDisplay[] = [];
+    for (const order of data) {
+      const productResponse = await fetch(`http://localhost:8080/product?product_id=${order.product_id}`);
+      const productData = await productResponse.json();
+      ordersDisplay.push({
+        student_id: order.student_id,
+        product_name: productData.name,
+        total_price: order.total_price,
+        paid: order.paid,
+        done: order.done,
+      });
+    }
+
+    return ordersDisplay;
+  } catch (error) {
+    console.error("Error fetching orders:", error);
+    return [];
+  }
+};
 
 export default function Main() {
   const [page, setPage] = useState(0);
@@ -68,7 +45,17 @@ export default function Main() {
 
   const totalPages = Math.ceil(orders.length / ordersPerPage);
   const startIndex = page * ordersPerPage;
-  const currentOrders = orders.slice(startIndex, startIndex + ordersPerPage);
+  const [currentOrders, setCurrentOrders] = useState<OrderDisplay[]>([]);
+
+  const handleFetchOrders = async () => {
+    const data = await fetchOrders();
+    orders.push(...data);
+    setCurrentOrders(data.slice(startIndex, startIndex + ordersPerPage));
+  };
+
+  React.useEffect(() => {
+    handleFetchOrders();
+  }, []);
 
   return (
     <div className="mt-6 sm:mt-8">
@@ -88,11 +75,11 @@ export default function Main() {
       {/* แสดง Orders ของหน้านี้ ถ้าไม่มีรายการสั่งเข้ามาจะเป็นหน้าเปล่านะ*/}
       {currentOrders.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20">
-          <img
+          {/* <img
             src="/assets/empty-box.png"
             alt="No orders"
             className="w-40 h-40 opacity-70 mb-6"
-          />
+          /> */}
           <h2 className="text-2xl font-bold text-[#12314D]">
             ยังไม่มีรายการสั่งซื้อ
           </h2>
@@ -100,34 +87,26 @@ export default function Main() {
         </div>
       ) : (
         <div className="mt-6 sm:mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8 px-4 sm:px-6 md:px-8">
-          {currentOrders.map((order) => (
+          {currentOrders.map((order, i) => (
             <div
-              key={order.id}
-              className="bg-white w-full rounded-3xl p-4 md:p-5 shadow-xl"
+              key={i}
+              className="border border-gray-300 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow bg-white"
             >
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-center mb-3 text-[#12314D] leading-tight">
-                {order.id}
-              </h1>
-              <img
-                src={order.img}
-                className="rounded-2xl w-full aspect-square object-cover"
-                alt={order.menu}
-              />
-              <div className="mt-4 font-bold text-base sm:text-lg leading-relaxed">
-                MENU : {order.menu} <br />
-                USER : {order.user} <br />
-                TIME : {order.time} <br />
-                NOTE : {order.note} <br />
-                PRICE : {order.price}฿
-              </div>
-              <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:justify-between">
-                <button className="bg-[#E3E3E3] px-4 py-3 rounded-xl font-bold shadow-2xl cursor-pointer">
-                  DECLINE
-                </button>
-                <button className="bg-[#ED9133] px-4 py-3 rounded-xl font-bold shadow-2xl cursor-pointer text-white">
-                  ACCEPT
-                </button>
-              </div>
+              <h3 className="text-lg font-semibold mb-2">
+                {order.product_name}
+              </h3>
+              <p className="text-gray-800 mb-1">
+                รหัสนักศึกษา: {order.student_id}
+              </p>
+              <p className="text-gray-800 mb-2">
+                ราคาสินค้า: ฿{order.total_price}
+              </p>
+              <p className="text-gray-600 mb-1">
+                สถานะการชำระเงิน: {order.paid ? "ชำระแล้ว" : "ยังไม่ชำระ"}
+              </p>
+              <p className="text-gray-600">
+                สถานะการดำเนินการ: {order.done ? "เสร็จสิ้น" : "กำลังดำเนินการ"}
+              </p>
             </div>
           ))}
         </div>
