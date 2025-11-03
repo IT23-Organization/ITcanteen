@@ -23,6 +23,7 @@ type Store struct {
 	StoreID  int       `json:"store_id"`
 	Name     string    `json:"name"`
 	ImageURL string    `json:"image_url"`
+	MenuURL  string    `json:"menu_url"`
 	Products []Product `json:"products"`
 }
 
@@ -72,6 +73,20 @@ type Order struct {
 	TotalPrice float64 `json:"total_price"`
 	Paid       bool    `json:"paid"`
 	Done       bool    `json:"done"`
+}
+
+type CreateStoreRequest struct {
+	Name     string `json:"name"`
+	ImageURL string `json:"image_url"`
+	MenuURL  string `json:"menu_url"`
+}
+
+func (csr *CreateStoreRequest) toStore(store *Store, storeID int) {
+	store.StoreID = storeID
+	store.Name = csr.Name
+	store.ImageURL = csr.ImageURL
+	store.MenuURL = csr.MenuURL
+	store.Products = []Product{}
 }
 
 // CreateProductRequest is used when adding a new product to a store.
@@ -140,14 +155,17 @@ func initialize() {
 	_, err = db.Exec(`
 	CREATE TABLE IF NOT EXISTS stores (
 		store_id INTEGER PRIMARY KEY,
-		name     TEXT NOT NULL,
-		products TEXT NOT NULL
+		name      TEXT NOT NULL,
+		products  TEXT NOT NULL,
+		image_url TEXT,
+		menu_url  TEXT
 	);
 	CREATE TABLE IF NOT EXISTS products (
 		product_id INTEGER PRIMARY KEY,
 		store_id   INTEGER NOT NULL,
 		name       TEXT    NOT NULL,
 		price      REAL    NOT NULL,
+		image_url  TEXT,
 		FOREIGN KEY (store_id) REFERENCES stores(store_id)
 	);
 	CREATE TABLE IF NOT EXISTS orders (
@@ -166,7 +184,7 @@ func initialize() {
 		panic(err)
 	}
 
-	rows, err := db.Query("SELECT store_id, name, products FROM stores")
+	rows, err := db.Query("SELECT store_id, name, products, image_url, menu_url FROM stores")
 	if err != nil {
 		panic(err)
 	}
@@ -174,7 +192,7 @@ func initialize() {
 	for rows.Next() {
 		var store Store
 		var productsJSON string
-		err := rows.Scan(&store.StoreID, &store.Name, &productsJSON)
+		err := rows.Scan(&store.StoreID, &store.Name, &productsJSON, &store.ImageURL, &store.MenuURL)
 		if err != nil {
 			panic(err)
 		}
@@ -202,14 +220,14 @@ func initialize() {
 		orders = append(orders, order)
 	}
 
-	rows, err = db.Query("SELECT product_id, name, price FROM products")
+	rows, err = db.Query("SELECT product_id, name, price, image_url FROM products")
 	if err != nil {
 		panic(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var product Product
-		err := rows.Scan(&product.ProductID, &product.Name, &product.Price)
+		err := rows.Scan(&product.ProductID, &product.Name, &product.Price, &product.ImageURL)
 		if err != nil {
 			panic(err)
 		}
@@ -228,14 +246,14 @@ func persist() {
 		if err != nil {
 			panic(err)
 		}
-		_, err = db.Exec("REPLACE INTO stores (store_id, name, products) VALUES (?, ?, ?)", store.StoreID, store.Name, string(productsJSON))
+		_, err = db.Exec("REPLACE INTO stores (store_id, name, products, image_url, menu_url) VALUES (?, ?, ?, ?, ?)", store.StoreID, store.Name, string(productsJSON), store.ImageURL, store.MenuURL)
 		if err != nil {
 			panic(err)
 		}
 	}
 
 	for _, product := range products {
-		_, err = db.Exec("REPLACE INTO products (product_id, store_id, name, price) VALUES (?, ?, ?, ?)", product.ProductID, product.StoreID, product.Name, product.Price)
+		_, err = db.Exec("REPLACE INTO products (product_id, store_id, name, price, image_url) VALUES (?, ?, ?, ?, ?)", product.ProductID, product.StoreID, product.Name, product.Price, product.ImageURL)
 		if err != nil {
 			panic(err)
 		}
@@ -291,21 +309,24 @@ func jsonResponse(w http.ResponseWriter, status int, data any) {
 }
 
 func handleStoreCreate(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		jsonResponse(w, http.StatusBadRequest, "Missing store name")
+	var createStoreRequest CreateStoreRequest
+	err := json.NewDecoder(r.Body).Decode(&createStoreRequest)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, "Invalid store data")
 		return
 	}
+
 	if len(stores) >= 1000 {
 		jsonResponse(w, http.StatusBadRequest, "Store limit reached, have we reached that point?")
 		return
 	}
-	newStore := Store{
-		StoreID:  len(stores) + 1,
-		Name:     name,
-		Products: []Product{},
-	}
+
+	newStoreID := len(stores) + 1
+	var newStore Store
+
+	createStoreRequest.toStore(&newStore, newStoreID)
 	stores = append(stores, newStore)
+
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"ok":       "true",
 		"store_id": newStore.StoreID,

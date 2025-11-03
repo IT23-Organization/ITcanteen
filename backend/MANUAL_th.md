@@ -17,11 +17,17 @@
 ### 🔵 `POST /store/create` สร้างร้านใหม่
 | | |
 |-|-|
-| Query Parameters | `name` (string, required) — ชื่อร้าน
+| Body (JSON) | `name` (string, required) — ชื่อร้าน
+| | `image_url` (string, optional) — URL รูปภาพร้าน
+| | `menu_url` (string, optional) — URL รูปภาพเมนูร้าน
 
 **ตัวอย่าง:**
 ```
-POST /store/create?name=โคเจ
+{
+  "name": "โคเจ",
+  "image_url": "https://example.com/store.jpg",
+  "menu_url": "https://example.com/menu.jpg"
+}
 ```
 
 **ผลลัพธ์:**
@@ -50,6 +56,7 @@ GET /store?store_id=1
   "store_id": 1,
   "name": "โคเจ",
   "image_url": "https://example.com/store.jpg",
+  "menu_url": "https://example.com/menu.jpg",
   "products": [
     {
       "product_id": 1001,
@@ -79,12 +86,14 @@ GET /store
     "store_id": 1,
     "name": "โคเจ",
     "image_url": "...",
+    "menu_url": "...",
     "products": [...]
   },
   {
     "store_id": 2,
     "name": "ชาบูชิ",
     "image_url": "...",
+    "menu_url": "...",
     "products": [...]
   },
   ...
@@ -104,7 +113,7 @@ GET /store
 POST /store/delete?store_id=1
 ```
 
-**ผลลัพธ์:** 
+**ผลลัพธ์:**
 ```json
 "bye"
 ```
@@ -124,7 +133,7 @@ POST /store/delete?store_id=1
   "store_id": 1,
   "name": "ชาเย็น",
   "price": 25.0,
-  "image_url": "https://example.com/milk_tea.jpg"
+  "image_url": "https://example.com/milk_tea.jpg",
 }
 ```
 
@@ -250,7 +259,7 @@ GET /product?product_id=1002
 ```
 ระบบจะอัปเดตเฉพาะ field ที่ส่งมา
 
-**ผลลัพธ์:**  
+**ผลลัพธ์:**
 ```json
 {"ok": "true"}
 ```
