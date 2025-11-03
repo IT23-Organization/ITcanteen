@@ -71,6 +71,7 @@ type Order struct {
 	StoreID    int     `json:"store_id"`
 	ProductID  int     `json:"product_id"`
 	TotalPrice float64 `json:"total_price"`
+	Note       string  `json:"note"`
 	Paid       bool    `json:"paid"`
 	Done       bool    `json:"done"`
 }
@@ -101,15 +102,17 @@ type CreateProductRequest struct {
 // CreateOrderRequest is used when creating a new order.
 // It lacks fields that are set by the server.
 type CreateOrderRequest struct {
-	StudentID int `json:"student_id"`
-	StoreID   int `json:"store_id"`
-	ProductID int `json:"product_id"`
+	StudentID int    `json:"student_id"`
+	StoreID   int    `json:"store_id"`
+	ProductID int    `json:"product_id"`
+	Note      string `json:"note"`
 }
 
 func (cor *CreateOrderRequest) toOrder(order *Order, orderID int) {
 	order.StudentID = cor.StudentID
 	order.StoreID = cor.StoreID
 	order.ProductID = cor.ProductID
+	order.Note = cor.Note
 
 	order.OrderID = orderID
 	order.TotalPrice = 0.0
@@ -174,6 +177,7 @@ func initialize() {
 		store_id    INTEGER NOT NULL,
 		product_id  INTEGER NOT NULL,
 		total_price REAL    NOT NULL,
+		note        TEXT,
 		paid        INTEGER NOT NULL,
 		done        INTEGER NOT NULL,
 		FOREIGN KEY (store_id) REFERENCES stores(store_id)
@@ -203,7 +207,7 @@ func initialize() {
 		stores = append(stores, store)
 	}
 
-	rows, err = db.Query("SELECT order_id, student_id, store_id, product_id, total_price, paid, done FROM orders")
+	rows, err = db.Query("SELECT order_id, student_id, store_id, product_id, total_price, note, paid, done FROM orders")
 	if err != nil {
 		panic(err)
 	}
@@ -211,7 +215,7 @@ func initialize() {
 	for rows.Next() {
 		var order Order
 		var paidInt, doneInt int
-		err := rows.Scan(&order.OrderID, &order.StudentID, &order.StoreID, &order.ProductID, &order.TotalPrice, &paidInt, &doneInt)
+		err := rows.Scan(&order.OrderID, &order.StudentID, &order.StoreID, &order.ProductID, &order.TotalPrice, &order.Note, &paidInt, &doneInt)
 		if err != nil {
 			panic(err)
 		}
@@ -270,8 +274,8 @@ func persist() {
 		}
 
 		_, err = db.Exec(
-			"REPLACE INTO orders (order_id, student_id, store_id, product_id, total_price, paid, done) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			order.OrderID, order.StudentID, order.StoreID, order.ProductID, order.TotalPrice, paidInt, doneInt,
+			"REPLACE INTO orders (order_id, student_id, store_id, product_id, total_price, note, paid, done) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			order.OrderID, order.StudentID, order.StoreID, order.ProductID, order.TotalPrice, order.Note, paidInt, doneInt,
 		)
 		if err != nil {
 			panic(err)

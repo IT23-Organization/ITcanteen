@@ -229,13 +229,15 @@ GET /product?product_id=1002
 | Body (JSON) | `student_id` (int, required) — รหัสนักเรียน
 | | `store_id` (int, required) — รหัสร้าน
 | | `product_id` (int, required) — รหัสสินค้า
+| | `note` (string, required) — หมายเหตุเพิ่มเติมสำหรับออเดอร์
 
 **ตัวอย่าง:**
 ```json
 {
   "student_id": 68070036,
   "store_id": 1,
-  "product_id": 1002
+  "product_id": 1002,
+  "note": "ไม่เอาน้ำตาล" // leave empty if none
 }
 ```
 
