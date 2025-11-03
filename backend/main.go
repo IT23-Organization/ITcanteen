@@ -573,6 +573,12 @@ func middleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		log.Printf("%s %s\n", r.Method, r.URL.Path)
 		next.ServeHTTP(w, r)
 	})
@@ -606,7 +612,7 @@ func main() {
 
 	router.HandleFunc("/orders", handleGetOrder)
 	router.HandleFunc("/orders/add", handleAddOrder)
-	router.HandleFunc("/orders/update", handleUpdateOrder)
+	router.HandleFunc("/orders/update", handleUpdateOrder).Methods("POST")
 	router.HandleFunc("/orders/student", handleGetOrdersForStudent)
 
 	loggedRouter := middleware(router)

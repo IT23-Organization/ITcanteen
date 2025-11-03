@@ -3,20 +3,15 @@
 import React, { useState } from "react";
 import Link from "next/link";
 
-type OrderDisplay = {
-  student_id: number;
-  product_name: string;
-  total_price: number;
-  paid: boolean;
-  done: boolean;
-}
+import { OrderDisplay } from "../lib/types";
 
 const orders: OrderDisplay[] = [];
 
 const fetchOrders = async () => {
   try {
     const response = await fetch("http://localhost:8080/store/orders?store_id=1");
-    const data = await response.json();
+    const data = await response.json()
+        .then((res: any[]) => res.filter((order) => !order.done));
 
     // fetch each order's product name
     const ordersDisplay: OrderDisplay[] = [];
@@ -24,6 +19,7 @@ const fetchOrders = async () => {
       const productResponse = await fetch(`http://localhost:8080/product?product_id=${order.product_id}`);
       const productData = await productResponse.json();
       ordersDisplay.push({
+        order_id: order.order_id,
         student_id: order.student_id,
         product_name: productData.name,
         total_price: order.total_price,
@@ -36,6 +32,32 @@ const fetchOrders = async () => {
   } catch (error) {
     console.error("Error fetching orders:", error);
     return [];
+  }
+};
+
+const sendUpdateOrderRequest = async (orderId: number, paid: boolean, done: boolean) => {
+  try {
+    const response = await fetch("http://localhost:8080/orders/update", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        order_id: orderId,
+        paid: paid,
+        done: done,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("Error updating order:", error);
+    return null;
   }
 };
 
@@ -107,6 +129,17 @@ export default function Main() {
               <p className="text-gray-600">
                 สถานะการดำเนินการ: {order.done ? "เสร็จสิ้น" : "กำลังดำเนินการ"}
               </p>
+
+              <div className="mt-4">
+                <button
+                  className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                  onClick={async () => {
+                    const updatedOrder = await sendUpdateOrderRequest(order.order_id, order.paid, true);
+                  }}
+                >
+                  Confirm
+                </button>
+              </div>
             </div>
           ))}
         </div>

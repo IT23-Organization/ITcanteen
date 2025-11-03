@@ -3,43 +3,38 @@
 import React, { useState } from "react";
 import { FaCheckCircle, FaTimesCircle } from "react-icons/fa";
 import Link from "next/link";
-type HistoryOrder = {
-  id: string;
-  img: string;
-  menu: string;
-  user: string;
-  time: string;
-  note: string;
-  price: string;
-  status: "accepted" | "declined";
-  finishedAt: string; // เวลาเสร็จสิ้น
-};
 
-const historyOrders: HistoryOrder[] = [
-  {
-    id: "#A001",
-    img: "./assets/Mama_instant_noodle_block.jpg",
-    menu: "NOOOOODEL",
-    user: "68070070",
-    time: "10:00 PM",
-    note: "lorem20 kfknsnkgns",
-    price: "50฿",
-    status: "accepted",
-    finishedAt: "10:26 PM",
-  },
-  {
-    id: "#A002",
-    img: "./assets/ChatGPT Image 13 ส.ค. 2568 21_21_57.png",
-    menu: "NOOOOOODEL",
-    user: "68070071",
-    time: "10:00 PM",
-    note: "lorem20 kfknsnkgns",
-    price: "50฿",
-    status: "declined",
-    finishedAt: "10:30 PM",
-  },
-  // เพิ่มออเดอร์ได้เรื่อย ๆ
-];
+import { OrderDisplay } from "../lib/types";
+
+const historyOrders: OrderDisplay[] = [];
+
+const fetchOrders = async () => {
+  try {
+    const response = await fetch("http://localhost:8080/store/orders?store_id=1");
+    const data = await response.json()
+        .then((res: any[]) => res.filter((order) => order.paid || order.done));
+
+    // fetch each order's product name
+    const ordersDisplay: OrderDisplay[] = [];
+    for (const order of data) {
+      const productResponse = await fetch(`http://localhost:8080/product?product_id=${order.product_id}`);
+      const productData = await productResponse.json();
+      ordersDisplay.push({
+        order_id: order.order_id,
+        student_id: order.student_id,
+        product_name: productData.name,
+        total_price: order.total_price,
+        paid: order.paid,
+        done: order.done,
+      });
+    }
+
+    return ordersDisplay;
+  } catch (error) {
+    console.error("Error fetching orders:", error);
+    return [];
+  }
+};
 
 export default function HistoryPage() {
   const [page, setPage] = useState(0);
@@ -47,7 +42,15 @@ export default function HistoryPage() {
 
   const totalPages = Math.ceil(historyOrders.length / ordersPerPage);
   const startIndex = page * ordersPerPage;
-  const currentOrders = historyOrders.slice(startIndex, startIndex + ordersPerPage);
+  const [currentOrders, setCurrentOrders] = useState<OrderDisplay[]>([]);
+
+  React.useEffect(() => {
+    const loadOrders = async () => {
+      const orders = await fetchOrders();
+      setCurrentOrders(orders.slice(startIndex, startIndex + ordersPerPage));
+    };
+    loadOrders();
+  }, [page, startIndex]);
 
   return (
     <div className="mt-6 sm:mt-8">
@@ -77,43 +80,34 @@ export default function HistoryPage() {
         </div>
       ) : (
         <div className="mt-6 sm:mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8 px-4 sm:px-6 md:px-8">
-          {currentOrders.map((order) => (
+          {currentOrders.map((order, i) => (
             <div
-              key={order.id}
+              key={i}
               className="bg-white w-full rounded-3xl p-4 md:p-5 shadow-xl flex flex-col justify-between"
             >
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-center mb-3 text-[#12314D] leading-tight">
-                {order.id}
-              </h1>
-
-              {/* รูป + overlay + status icon */}
-              <div className="relative">
-                <img
-                  src={order.img}
-                  className="rounded-2xl w-full aspect-square object-cover brightness-20"
-                  alt={order.menu}
-                />
-                {order.status === "accepted" ? (
-                  <FaCheckCircle className="absolute inset-0 m-auto text-green-500 w-16 h-16 drop-shadow-lg" />
+              <div>
+                <h3 className="text-lg font-semibold mb-2">
+                  {order.product_name}
+                </h3>
+                <p className="text-gray-800 mb-1">
+                  รหัสนักศึกษา: {order.student_id}
+                </p>
+                <p className="text-gray-800 mb-1">
+                  ราคาทั้งหมด: {order.total_price} บาท
+                </p>
+              </div>
+              <div className="mt-4">
+                {order.done ? (
+                  <div className="flex items-center text-green-600">
+                    <FaCheckCircle className="mr-2" />
+                    <span>เสร็จแล้ว</span>
+                  </div>
                 ) : (
-                  <FaTimesCircle className="absolute inset-0 m-auto text-red-500 w-16 h-16 drop-shadow-lg" />
+                  <div className="flex items-center text-red-600">
+                    <FaTimesCircle className="mr-2" />
+                    <span>ยกเลิกออเดอร์</span>
+                  </div>
                 )}
-              </div>
-
-              {/* รายละเอียด */}
-              <div className="mt-4 font-bold text-base sm:text-lg leading-relaxed">
-                MENU : {order.menu} <br />
-                USER : {order.user} <br />
-                TIME : {order.time} <br />
-                NOTE : {order.note} <br />
-                PRICE : {order.price}
-              </div>
-
-              {/* เวลา finish/cancel */}
-              <div className="mt-4 text-right text-sm text-gray-500 font-semibold">
-                {order.status === "accepted"
-                  ? `FINISHED ${order.finishedAt}`
-                  : `CANCELLED ${order.finishedAt}`}
               </div>
             </div>
           ))}
