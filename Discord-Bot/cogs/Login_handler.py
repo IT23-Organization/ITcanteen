@@ -5,6 +5,10 @@ from discord import app_commands
 
 GUILD_ID = 1418981762872115343
 VERIFIED_ROLE_ID = 1433761427767951473
+TMPDATA = {
+    "68070063" : "ธรรมธัช ก้อนนาค",
+    "68070036" : "เอยอิ่มอร่อย เก"
+}
 
 class Login(commands.Cog):
  
@@ -49,7 +53,7 @@ class Login(commands.Cog):
             ephemeral=True
         )
 
-    async def assign_verified_role(self,member: discord.Member,guild : discord.Guild,student_id:str) -> str:
+    async def assign_verified_role(self,member: discord.Member,guild : discord.Guild,student_id:str,student_name:str) -> str:
         verified_role = guild.get_role(VERIFIED_ROLE_ID)
         role_status = ""
 
@@ -67,11 +71,12 @@ class Login(commands.Cog):
                 role_status = f"Role assignment failed: Error: {e}"
         nick_status = ''
         try:
-            if member.nick != student_id:
-                await member.edit(nick=student_id)
-                nick_status = f"Nickname changed to {student_id}."
+            fullnick = student_id + "|" + student_name
+            if member.nick != fullnick:
+                await member.edit(nick=fullnick)
+                nick_status = f"Nickname changed to {fullnick}."
             else:
-                nick_status = f"Nickname already set to {student_id}."
+                nick_status = f"Nickname already set to {fullnick}."
         except discord.Forbidden:
             nick_status = "Nickname assign failed : bot lacks permissions/hierarchy."
         except Exception as e:
@@ -88,7 +93,8 @@ class Login(commands.Cog):
                 "**Error!**\nPlease input a Unique KMITL Student ID.",ephemeral=False)
         await interaction.response.defer(ephemeral=True)
         
-        is_verified = self.isIT(student_id)
+        is_verified = self.isIT(student_id) and self.getName
+        student_name = self.getName(student_id).split(' ')[0]
 
         if is_verified:
             base_message = (
@@ -99,7 +105,8 @@ class Login(commands.Cog):
                 role_status_message = await self.assign_verified_role(
                     member=interaction.user,
                     guild=interaction.guild,
-                    student_id=student_id)
+                    student_id=student_id,
+                    student_name=student_name)
             else:
                 role_status_message = "\n*Role assignment skipped: Command not run in a guild context.*"
             response_message = f"{base_message}{role_status_message}"
@@ -115,14 +122,22 @@ class Login(commands.Cog):
     def isIT(self,ID) -> bool:
         try:
             # Extracts digits 3 & 4 (index 2 and 3) and checks if the integer value is 7
+            isIT = faculty_code == 7
             faculty_code = int(ID[2:4])
+            isValid = TMPDATA[ID] is not None
             # The unique ID part is unnecessary for the check, but we keep the logic clean
             # uniqueID = int(student_id[4:])
-            return faculty_code == 7
+            return 
         except (ValueError, IndexError):
             # If the slicing fails (IndexError) or conversion fails (ValueError),
             # the ID is invalid, so we return False.
             return False
+    def getName(self,ID) -> str:
+        # แบบไม่ดึงจาก database
+        if ID not in TMPDATA:
+            return None
+        return TMPDATA[ID]
+        # แบบดึงจาก database
 async def setup(bot):
     bot.synced = False
     await bot.add_cog(Login(bot))
