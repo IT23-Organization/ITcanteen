@@ -33,5 +33,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: backend-build
-          path: ./backend/*.exe
+          path: ./backend/main.exe
           retention-days: 5
