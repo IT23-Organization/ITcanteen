@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands # 1. (เพิ่ม) Import app_commands
 import aiohttp
 import asyncio
 import re
@@ -136,7 +137,8 @@ class OrderCog(commands.Cog):
             response_message = (
                 "ยินดีต้อนรับครับ! กรุณาเลือกร้านอาหารที่ต้องการ:\n"
                 f"{store_list_str}\n"
-                "**วิธีเลือก:** พิมพ์ `!menu <ชื่อร้านอาหาร>` (เช่น `!menu โคเจ`)"
+                # 2. (เปลี่ยน) อัปเดตข้อความเป็น Slash Command
+                "**วิธีเลือก:** พิมพ์ `/menu <ชื่อร้านอาหาร>` (เช่น `/menu โคเจ`)"
             )
             
             await message.channel.send(response_message)
@@ -148,17 +150,22 @@ class OrderCog(commands.Cog):
         pass
 
     # -----------------------------------------------------------------
-    # (แก้ไข) 5. คำสั่ง !menu (Requirement 2)
+    # (แก้ไข) 5. คำสั่ง /menu (Requirement 2)
     # -----------------------------------------------------------------
-    @commands.command(name="menu")
-    async def menu_cmd(self, ctx: commands.Context, *, store_name: str = None):
+    # 3. (เปลี่ยน) ใช้ @app_commands.command
+    @app_commands.command(name="menu")
+    @app_commands.describe(store_name="ชื่อร้านอาหารที่ต้องการดูเมนู (เช่น โคเจ)")
+    # 4. (เปลี่ยน) ใช้ interaction และ store_name เป็น non-optional
+    async def menu_cmd(self, interaction: discord.Interaction, store_name: str):
         
-        if not ctx.channel.name.startswith(self.ticket_prefix):
+        # 5. (เปลี่ยน) ใช้ interaction.channel
+        if not interaction.channel.name.startswith(self.ticket_prefix):
+            # 6. (เปลี่ยน) ใช้ interaction.response.send_message
+            await interaction.response.send_message("คำสั่งนี้สามารถใช้ได้ในช่องทิกเก็ตเท่านั้น", ephemeral=True)
             return
 
-        if store_name is None:
-            await ctx.send("กรุณาระบุชื่อร้านครับ. เช่น `!menu โคเจ`")
-            return
+        # 7. (เพิ่ม) Defer การตอบกลับ เพราะต้องใช้เวลาโหลด API
+        await interaction.response.defer()
             
         # (แก้ไข) ค้นหาร้านจาก cache ใหม่
         found_store = None
@@ -174,37 +181,35 @@ class OrderCog(commands.Cog):
                 break
         
         if not found_store:
-            await ctx.send(f"❌ ไม่พบร้านอาหารชื่อ: `{store_name}`")
+            # 8. (เปลี่ยน) ใช้ interaction.followup.send
+            await interaction.followup.send(f"❌ ไม่พบร้านอาหารชื่อ: `{store_name}`")
             return
             
         store_id = found_store["id"]
         store_name = found_store["name"]
         menu_url = found_store.get("menu_url") # นี่คือลิงก์รูปภาพ
 
-        # "ล็อก" ช่องนี้ไว้กับร้านนี้
-        self.channel_states[ctx.channel.id] = {"store_id": store_id, "store_name": store_name}
+        # 9. (เปลี่ยน) ใช้ interaction.channel.id
+        self.channel_states[interaction.channel.id] = {"store_id": store_id, "store_name": store_name}
         
         # (สำคัญ) โหลด "รายการสินค้า" (products) ไว้ใน cache เสมอ
-        # เพื่อให้คำสั่ง !order ทำงานได้
         menu_data = await self.fetch_store_menu(store_id)
 
         # --- (บล็อกแก้ไขหลัก) ---
 
-        # (Requirement) ถ้า API มี menu_url ให้ใช้รูปภาพ
         if menu_url:
             print(f"[OrderCog] ร้าน {store_name} มี menu_url: {menu_url}")
             embed = discord.Embed(
                 title=f"📋 เมนูร้าน {store_name}",
                 color=discord.Color.blue()
             )
-            # ตั้งค่รูปภาพหลักของ Embed
             embed.set_image(url=menu_url)
         
-        # (Fallback) ถ้า API ไม่มี menu_url ให้ใช้ Text (แบบเดิม)
         else:
             print(f"[OrderCog] ร้าน {store_name} ไม่มี menu_url, ใช้เมนูแบบข้อความแทน")
             if not menu_data:
-                await ctx.send(f"❌ ขออภัย, ไม่สามารถดึงเมนูร้าน **{store_name}** ได้ในขณะนี้")
+                # 10. (เปลี่ยน) ใช้ interaction.followup.send
+                await interaction.followup.send(f"❌ ขออภัย, ไม่สามารถดึงเมนูร้าน **{store_name}** ได้ในขณะนี้")
                 return
             
             menu_display_list = []
@@ -218,37 +223,45 @@ class OrderCog(commands.Cog):
                 color=discord.Color.blue()
             )
         
-        # (Requirement 2) เพิ่มตัวอย่างวิธีสั่ง (จะถูกเพิ่มทั้งแบบรูปและแบบ Text)
-        if menu_data and list(menu_data.values()): # เช็กว่ามีเมนูอย่างน้อย 1 รายการ
-            example_name = list(menu_data.values())[0]['original_name'] # เอาชื่อเมนูแรกมาเป็นตัวอย่าง
+        if menu_data and list(menu_data.values()): 
+            example_name = list(menu_data.values())[0]['original_name'] 
             embed.add_field(
                 name="💡 วิธีสั่งอาหาร",
-                value=f"พิมพ์ `!order {example_name}`\n"
-                      f"หรือ `!order {example_name} (สามารถระบุข้อความเพิ่มเติมถึงร้านค้า)`",
+                # 11. (เปลี่ยน) อัปเดตข้อความเป็น Slash Command
+                value=f"พิมพ์ `/order {example_name}`\n"
+                      f"หรือ `/order {example_name} (สามารถระบุข้อความเพิ่มเติมถึงร้านค้า)`",
                 inline=False
             )
         else:
              embed.set_footer(text="ร้านนี้ยังไม่มีรายการอาหารในระบบ")
         
-        await ctx.send(embed=embed)
+        # 12. (เปลี่ยน) ใช้ interaction.followup.send
+        await interaction.followup.send(embed=embed)
         # --- (จบ บล็อกแก้ไขหลัก) ---
 
     # -----------------------------------------------------------------
-    # 6. คำสั่ง !order (Requirement 3)
+    # 6. คำสั่ง /order (Requirement 3)
     # -----------------------------------------------------------------
-    @commands.command(name="order")
-    async def order_cmd(self, ctx: commands.Context, *, order_string: str = None):
+    # 13. (เปลี่ยน) ใช้ @app_commands.command
+    @app_commands.command(name="order")
+    @app_commands.describe(order_string="รายการอาหารที่สั่ง เช่น 'กะเพรา (ไม่เผ็ด)'")
+    # 14. (เปลี่ยน) ใช้ interaction และ order_string เป็น non-optional
+    async def order_cmd(self, interaction: discord.Interaction, order_string: str):
         
-        if not ctx.channel.name.startswith(self.ticket_prefix):
+        # 15. (เปลี่ยน) ใช้ interaction.channel
+        if not interaction.channel.name.startswith(self.ticket_prefix):
+            # 16. (เปลี่ยน) ใช้ interaction.response.send_message
+            await interaction.response.send_message("คำสั่งนี้สามารถใช้ได้ในช่องทิกเก็ตเท่านั้น", ephemeral=True)
             return
 
-        if order_string is None:
-            await ctx.send("กรุณาระบุเมนูที่ต้องการสั่งครับ. เช่น `!order กะเพรา`")
-            return
+        # 17. (เพิ่ม) Defer การตอบกลับ
+        await interaction.response.defer()
             
-        channel_state = self.channel_states.get(ctx.channel.id)
+        # 18. (เปลี่ยน) ใช้ interaction.channel.id
+        channel_state = self.channel_states.get(interaction.channel.id)
         if not channel_state:
-            await ctx.send("กรุณาเลือกร้านก่อนครับ พิมพ์ `!menu <ชื่อร้าน>`")
+            # 19. (เปลี่ยน) ใช้ interaction.followup.send และอัปเดตข้อความ
+            await interaction.followup.send("กรุณาเลือกร้านก่อนครับ พิมพ์ `/menu <ชื่อร้าน>`")
             return
             
         store_id = channel_state["store_id"]
@@ -256,16 +269,17 @@ class OrderCog(commands.Cog):
 
         food_name, note = self.parse_order_string(order_string)
         
-        # (สำคัญ) ตรวจสอบจาก self.menu_cache ที่โหลดไว้ตอน !menu
         menu_data = self.menu_cache.get(store_id)
         if not menu_data:
-            await ctx.send("เกิดข้อผิดพลาด, กรุณาพิมพ์ `!menu` ใหม่อีกครั้งครับ")
+            # 20. (เปลี่ยน) ใช้ interaction.followup.send และอัปเดตข้อความ
+            await interaction.followup.send("เกิดข้อผิดพลาด, กรุณาพิมพ์ `/menu` ใหม่อีกครั้งครับ")
             return
 
         food_details = menu_data.get(food_name.lower())
         
         if not food_details:
-            await ctx.send(f"❌ ไม่พบเมนู: **{food_name}** ในร้าน {store_name}")
+            # 21. (เปลี่ยน) ใช้ interaction.followup.send
+            await interaction.followup.send(f"❌ ไม่พบเมนู: **{food_name}** ในร้าน {store_name}")
             return
             
         product_id = food_details["id"]
@@ -273,12 +287,14 @@ class OrderCog(commands.Cog):
 
         order_endpoint = f"{self.api_base_url}/orders/add" #
         payload = {
-            "student_id": ctx.author.id,
+            "student_id": interaction.user.id, # 22. (เปลี่ยน) ใช้ interaction.user.id
             "store_id": store_id,
             "product_id": product_id
         }
         
-        await ctx.send("...กำลังส่งออเดอร์... 🚀")
+        # 23. (เปลี่ยน) ใช้ interaction.followup.send สำหรับข้อความ "กำลังส่ง"
+        # สังเกต: เราใช้ followup ที่นี่ เพราะเรา defer ไปแล้ว
+        await interaction.followup.send("...กำลังส่งออเดอร์... 🚀")
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -301,17 +317,21 @@ class OrderCog(commands.Cog):
                         desc += f"**🔔 คุณได้คิวที่: {queue_number}**"
                         
                         embed = discord.Embed(title=title, description=desc, color=discord.Color.green())
-                        await ctx.send(embed=embed)
+                        # 24. (เปลี่ยน) ใช้ followup.send อีกครั้งเพื่อส่ง Embed
+                        # (Slash command สามารถ followup ได้หลายครั้ง)
+                        await interaction.followup.send(embed=embed)
                         
                     else:
                         error_text = await response.text()
-                        await ctx.send(f"❌ เกิดข้อผิดพลาดในการส่งออเดอร์ (Status: {response.status})\n`{error_text}`")
+                        # 25. (เปลี่ยน) ใช้ followup.send สำหรับ error
+                        await interaction.followup.send(f"❌ เกิดข้อผิดพลาดในการส่งออเดอร์ (Status: {response.status})\n`{error_text}`")
                         
         except Exception as e:
-            await ctx.send(f"❌ เกิดข้อผิดพลาดรุนแรงในการเชื่อมต่อ API: {e}")
+            # 26. (เปลี่ยน) ใช้ followup.send สำหรับ exception
+            await interaction.followup.send(f"❌ เกิดข้อผิดพลาดรุนแรงในการเชื่อมต่อ API: {e}")
 
     # -----------------------------------------------------------------
-    # 7. ฟังก์ชันล้าง state เมื่อปิดทิกเก็ต
+    # 7. ฟังก์ชันล้าง state เมื่อปิดทิกเก็ต (ไม่เปลี่ยนแปลง)
     # -----------------------------------------------------------------
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel):
@@ -323,7 +343,7 @@ class OrderCog(commands.Cog):
                 pass
 
 # -----------------------------------------------------------------
-# 8. ฟังก์ชัน setup (ประตูทางเข้า)
+# 8. ฟังก์ชัน setup (ประตูทางเข้า) (ไม่เปลี่ยนแปลง)
 # -----------------------------------------------------------------
 async def setup(bot):
     await bot.add_cog(OrderCog(bot))
