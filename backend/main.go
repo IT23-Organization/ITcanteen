@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // --- Types ------------------------------
@@ -76,6 +77,16 @@ type Order struct {
 	Done       bool    `json:"done"`
 }
 
+// User represents a user (merchant) that owns a store to use in a website.
+type User struct {
+	UserID   int    `json:"user_id"`
+	Username string `json:"username"`
+	// Hashed password
+	Password string `json:"password"`
+	StoreID  int    `json:"store_id"`
+}
+
+// --- Request types
 type CreateStoreRequest struct {
 	Name     string `json:"name"`
 	ImageURL string `json:"image_url"`
@@ -137,6 +148,32 @@ func (uor *UpdateOrderRequest) applyToOrder(order *Order) {
 	}
 }
 
+type UserLoginRequest struct {
+	Username string `json:"username"`
+	// Unhashed password (from frontend)
+	Password string `json:"password"`
+}
+
+func (usr *UserLoginRequest) toUser(user *User, hashedPassword string, userID int, storeID int) {
+	user.Password = hashedPassword
+
+	user.UserID = userID
+	user.Username = usr.Username
+	user.StoreID = storeID
+}
+
+// --- Misc  ------------------------------
+
+func hashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func checkPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
 // --- State ------------------------------
 
 var stores []Store
@@ -145,6 +182,8 @@ var stores []Store
 var products []Product
 
 var orders []Order
+
+var users []User
 
 func initialize() {
 	// Init db
@@ -180,6 +219,13 @@ func initialize() {
 		note        TEXT,
 		paid        INTEGER NOT NULL,
 		done        INTEGER NOT NULL,
+		FOREIGN KEY (store_id) REFERENCES stores(store_id)
+	);
+	CREATE TABLE IF NOT EXISTS users (
+		user_id  INTEGER PRIMARY KEY,
+		username TEXT    NOT NULL UNIQUE,
+		password TEXT    NOT NULL,
+		store_id INTEGER NOT NULL,
 		FOREIGN KEY (store_id) REFERENCES stores(store_id)
 	);
 	`)
@@ -237,6 +283,20 @@ func initialize() {
 		}
 		products = append(products, product)
 	}
+
+	rows, err = db.Query("SELECT user_id, username, password, store_id FROM users")
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var user User
+		err := rows.Scan(&user.UserID, &user.Username, &user.Password, &user.StoreID)
+		if err != nil {
+			panic(err)
+		}
+		users = append(users, user)
+	}
 }
 
 func persist() {
@@ -281,6 +341,14 @@ func persist() {
 			panic(err)
 		}
 	}
+
+	for _, user := range users {
+		_, err = db.Exec("REPLACE INTO users (user_id, username, password, store_id) VALUES (?, ?, ?, ?)", user.UserID, user.Username, user.Password, user.StoreID)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	db.Close()
 }
 
@@ -312,6 +380,7 @@ func jsonResponse(w http.ResponseWriter, status int, data any) {
 	w.Write(json)
 }
 
+// --- Store
 func handleStoreCreate(w http.ResponseWriter, r *http.Request) {
 	var createStoreRequest CreateStoreRequest
 	err := json.NewDecoder(r.Body).Decode(&createStoreRequest)
@@ -337,7 +406,7 @@ func handleStoreCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// TODO add User type and check permissions
+// TODO check permissions
 func handleStoreDelete(w http.ResponseWriter, r *http.Request) {
 	storeIDStr := r.URL.Query().Get("store_id")
 	storeID, err := strconv.Atoi(storeIDStr)
@@ -434,6 +503,7 @@ func handleGetStore(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusBadRequest, "Store not found")
 }
 
+// --- Product
 func handleGetProduct(w http.ResponseWriter, r *http.Request) {
 	productIDStr := r.URL.Query().Get("product_id")
 	productID, err := strconv.Atoi(productIDStr)
@@ -467,6 +537,7 @@ func handleGetProductsFromStore(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, products)
 }
 
+// --- Order
 func handleAddOrder(w http.ResponseWriter, r *http.Request) {
 	var createOrderRequest CreateOrderRequest
 	err := json.NewDecoder(r.Body).Decode(&createOrderRequest)
@@ -570,6 +641,70 @@ func handleGetOrdersForStudent(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, studentOrders)
 }
 
+// --- User
+func handleUserSignup(w http.ResponseWriter, r *http.Request) {
+	var signupReq UserLoginRequest
+	err := json.NewDecoder(r.Body).Decode(&signupReq)
+	if err != nil {
+		http.Error(w, "Invalid signup data", http.StatusBadRequest)
+		return
+	}
+
+	// Check if username already exists
+	for _, user := range users {
+		if user.Username == signupReq.Username {
+			http.Error(w, "Username already exists", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Make sure password length does not exceed 72 bytes (bcrypt limit)
+	if len(signupReq.Password) > 72 {
+		http.Error(w, "Password too long", http.StatusBadRequest)
+		return
+	}
+
+	// Hash password
+	hashedPassword, err := hashPassword(signupReq.Password)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// TODO jwt tokens
+	var user User
+	signupReq.toUser(&user, hashedPassword, len(users)+1, 1)
+	users = append(users, user)
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"user_id": user.UserID,
+	})
+}
+
+func handleUserLogin(w http.ResponseWriter, r *http.Request) {
+	var loginReq UserLoginRequest
+	err := json.NewDecoder(r.Body).Decode(&loginReq)
+	if err != nil {
+		http.Error(w, "Invalid login data", http.StatusBadRequest)
+		return
+	}
+
+	for _, user := range users {
+		if user.Username == loginReq.Username {
+			if checkPasswordHash(loginReq.Password, user.Password) {
+				jsonResponse(w, http.StatusOK, map[string]any{
+					"user_id":  user.UserID,
+					"store_id": user.StoreID,
+				})
+				return
+			} else {
+				http.Error(w, "Invalid password", http.StatusUnauthorized)
+				return
+			}
+		}
+	}
+	http.Error(w, "User not found", http.StatusNotFound)
+}
+
 func middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CORS headers
@@ -606,18 +741,21 @@ func main() {
 
 	router.HandleFunc("/store", handleGetStore).Methods("GET")
 	router.HandleFunc("/store/create", handleStoreCreate).Methods("POST")
-	router.HandleFunc("/store/delete", handleStoreDelete)
-	router.HandleFunc("/store/product", handleGetProductsFromStore)
-	router.HandleFunc("/store/product/add", handleStoreAddProduct)
-	router.HandleFunc("/store/product/remove", handleStoreRemoveProduct)
-	router.HandleFunc("/store/orders", handleGetOrdersForStore)
+	router.HandleFunc("/store/delete", handleStoreDelete).Methods("POST")
+	router.HandleFunc("/store/product", handleGetProductsFromStore).Methods("GET")
+	router.HandleFunc("/store/product/add", handleStoreAddProduct).Methods("POST")
+	router.HandleFunc("/store/product/remove", handleStoreRemoveProduct).Methods("POST")
+	router.HandleFunc("/store/orders", handleGetOrdersForStore).Methods("GET")
 
-	router.HandleFunc("/product", handleGetProduct)
+	router.HandleFunc("/product", handleGetProduct).Methods("GET")
 
-	router.HandleFunc("/orders", handleGetOrder)
-	router.HandleFunc("/orders/add", handleAddOrder)
+	router.HandleFunc("/orders", handleGetOrder).Methods("GET")
+	router.HandleFunc("/orders/add", handleAddOrder).Methods("POST")
 	router.HandleFunc("/orders/update", handleUpdateOrder).Methods("POST")
-	router.HandleFunc("/orders/student", handleGetOrdersForStudent)
+	router.HandleFunc("/orders/student", handleGetOrdersForStudent).Methods("GET")
+
+	router.HandleFunc("/user/signup", handleUserSignup).Methods("POST")
+	router.HandleFunc("/user/login", handleUserLogin).Methods("POST")
 
 	loggedRouter := middleware(router)
 	http.ListenAndServe(":8080", loggedRouter)
