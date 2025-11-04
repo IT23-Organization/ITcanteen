@@ -127,7 +127,7 @@ class Login(commands.Cog):
             isValid = TMPDATA[ID] is not None
             # The unique ID part is unnecessary for the check, but we keep the logic clean
             # uniqueID = int(student_id[4:])
-            return 
+            return isIT and isValid
         except (ValueError, IndexError):
             # If the slicing fails (IndexError) or conversion fails (ValueError),
             # the ID is invalid, so we return False.
