@@ -7,7 +7,8 @@ GUILD_ID = 1418981762872115343
 VERIFIED_ROLE_ID = 1433761427767951473
 TMPDATA = {
     "68070063" : "ธรรมธัช ก้อนนาค",
-    "68070036" : "เอยอิ่มอร่อย เก"
+    "68070036" : "เอยอิ่มอร่อย เก",
+    "68070070" : "ธีรพล อักษรหรั่ง",
 }
 
 class Login(commands.Cog):
@@ -60,7 +61,7 @@ class Login(commands.Cog):
         if not verified_role:
             role_status = f"Role Not Found: Could not find the role with ID `{VERIFIED_ROLE_ID}`."
         elif verified_role in member.roles:
-                role_status = f"Role Already Assigned: Member already has the '{verified_role.name}' role."
+            role_status = f"Role Already Assigned: Member already has the '{verified_role.name}' role."
         else:
             try:
                 await member.add_roles(verified_role)
@@ -92,9 +93,13 @@ class Login(commands.Cog):
             return await interaction.response.send_message(
                 "**Error!**\nPlease input a Unique KMITL Student ID.",ephemeral=False)
         await interaction.response.defer(ephemeral=True)
-        
-        is_verified = self.isIT(student_id) and self.getName
+
+        print("Starting verification process...")
+
+        is_verified = self.isIT(student_id) and self.getName(student_id) is not None
         student_name = self.getName(student_id).split(' ')[0]
+
+        print(f"Verification attempt for ID: {student_id}, Verified: {is_verified}")
 
         if is_verified:
             base_message = (
@@ -115,6 +120,7 @@ class Login(commands.Cog):
                 f"❌ **Verification Failed!**\n"
                 # f"Student ID `{student_id}` is not recognized as IT Faculty (Code 07)."
             )
+
         await interaction.followup.send(
             response_message,
             ephemeral=True
@@ -122,12 +128,11 @@ class Login(commands.Cog):
     def isIT(self,ID) -> bool:
         try:
             # Extracts digits 3 & 4 (index 2 and 3) and checks if the integer value is 7
-            isIT = faculty_code == 7
             faculty_code = int(ID[2:4])
-            isValid = TMPDATA[ID] is not None
+            is_it = faculty_code == 7
             # The unique ID part is unnecessary for the check, but we keep the logic clean
             # uniqueID = int(student_id[4:])
-            return isIT and isValid
+            return is_it
         except (ValueError, IndexError):
             # If the slicing fails (IndexError) or conversion fails (ValueError),
             # the ID is invalid, so we return False.
