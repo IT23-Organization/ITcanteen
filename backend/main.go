@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // --- Types ------------------------------
@@ -23,6 +24,7 @@ type Store struct {
 	StoreID  int       `json:"store_id"`
 	Name     string    `json:"name"`
 	ImageURL string    `json:"image_url"`
+	MenuURL  string    `json:"menu_url"`
 	Products []Product `json:"products"`
 }
 
@@ -70,8 +72,33 @@ type Order struct {
 	StoreID    int     `json:"store_id"`
 	ProductID  int     `json:"product_id"`
 	TotalPrice float64 `json:"total_price"`
+	Note       string  `json:"note"`
 	Paid       bool    `json:"paid"`
 	Done       bool    `json:"done"`
+}
+
+// User represents a user (merchant) that owns a store to use in a website.
+type User struct {
+	UserID   int    `json:"user_id"`
+	Username string `json:"username"`
+	// Hashed password
+	Password string `json:"password"`
+	StoreID  int    `json:"store_id"`
+}
+
+// --- Request types
+type CreateStoreRequest struct {
+	Name     string `json:"name"`
+	ImageURL string `json:"image_url"`
+	MenuURL  string `json:"menu_url"`
+}
+
+func (csr *CreateStoreRequest) toStore(store *Store, storeID int) {
+	store.StoreID = storeID
+	store.Name = csr.Name
+	store.ImageURL = csr.ImageURL
+	store.MenuURL = csr.MenuURL
+	store.Products = []Product{}
 }
 
 // CreateProductRequest is used when adding a new product to a store.
@@ -86,15 +113,17 @@ type CreateProductRequest struct {
 // CreateOrderRequest is used when creating a new order.
 // It lacks fields that are set by the server.
 type CreateOrderRequest struct {
-	StudentID int `json:"student_id"`
-	StoreID   int `json:"store_id"`
-	ProductID int `json:"product_id"`
+	StudentID int    `json:"student_id"`
+	StoreID   int    `json:"store_id"`
+	ProductID int    `json:"product_id"`
+	Note      string `json:"note"`
 }
 
 func (cor *CreateOrderRequest) toOrder(order *Order, orderID int) {
 	order.StudentID = cor.StudentID
 	order.StoreID = cor.StoreID
 	order.ProductID = cor.ProductID
+	order.Note = cor.Note
 
 	order.OrderID = orderID
 	order.TotalPrice = 0.0
@@ -119,6 +148,32 @@ func (uor *UpdateOrderRequest) applyToOrder(order *Order) {
 	}
 }
 
+type UserLoginRequest struct {
+	Username string `json:"username"`
+	// Unhashed password (from frontend)
+	Password string `json:"password"`
+}
+
+func (usr *UserLoginRequest) toUser(user *User, hashedPassword string, userID int, storeID int) {
+	user.Password = hashedPassword
+
+	user.UserID = userID
+	user.Username = usr.Username
+	user.StoreID = storeID
+}
+
+// --- Misc  ------------------------------
+
+func hashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func checkPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
 // --- State ------------------------------
 
 var stores []Store
@@ -127,6 +182,8 @@ var stores []Store
 var products []Product
 
 var orders []Order
+
+var users []User
 
 func initialize() {
 	// Init db
@@ -140,14 +197,17 @@ func initialize() {
 	_, err = db.Exec(`
 	CREATE TABLE IF NOT EXISTS stores (
 		store_id INTEGER PRIMARY KEY,
-		name     TEXT NOT NULL,
-		products TEXT NOT NULL
+		name      TEXT NOT NULL,
+		products  TEXT NOT NULL,
+		image_url TEXT,
+		menu_url  TEXT
 	);
 	CREATE TABLE IF NOT EXISTS products (
 		product_id INTEGER PRIMARY KEY,
 		store_id   INTEGER NOT NULL,
 		name       TEXT    NOT NULL,
 		price      REAL    NOT NULL,
+		image_url  TEXT,
 		FOREIGN KEY (store_id) REFERENCES stores(store_id)
 	);
 	CREATE TABLE IF NOT EXISTS orders (
@@ -156,8 +216,16 @@ func initialize() {
 		store_id    INTEGER NOT NULL,
 		product_id  INTEGER NOT NULL,
 		total_price REAL    NOT NULL,
+		note        TEXT,
 		paid        INTEGER NOT NULL,
 		done        INTEGER NOT NULL,
+		FOREIGN KEY (store_id) REFERENCES stores(store_id)
+	);
+	CREATE TABLE IF NOT EXISTS users (
+		user_id  INTEGER PRIMARY KEY,
+		username TEXT    NOT NULL UNIQUE,
+		password TEXT    NOT NULL,
+		store_id INTEGER NOT NULL,
 		FOREIGN KEY (store_id) REFERENCES stores(store_id)
 	);
 	`)
@@ -166,7 +234,7 @@ func initialize() {
 		panic(err)
 	}
 
-	rows, err := db.Query("SELECT store_id, name, products FROM stores")
+	rows, err := db.Query("SELECT store_id, name, products, image_url, menu_url FROM stores")
 	if err != nil {
 		panic(err)
 	}
@@ -174,7 +242,7 @@ func initialize() {
 	for rows.Next() {
 		var store Store
 		var productsJSON string
-		err := rows.Scan(&store.StoreID, &store.Name, &productsJSON)
+		err := rows.Scan(&store.StoreID, &store.Name, &productsJSON, &store.ImageURL, &store.MenuURL)
 		if err != nil {
 			panic(err)
 		}
@@ -185,7 +253,7 @@ func initialize() {
 		stores = append(stores, store)
 	}
 
-	rows, err = db.Query("SELECT order_id, student_id, store_id, product_id, total_price, paid, done FROM orders")
+	rows, err = db.Query("SELECT order_id, student_id, store_id, product_id, total_price, note, paid, done FROM orders")
 	if err != nil {
 		panic(err)
 	}
@@ -193,7 +261,7 @@ func initialize() {
 	for rows.Next() {
 		var order Order
 		var paidInt, doneInt int
-		err := rows.Scan(&order.OrderID, &order.StudentID, &order.StoreID, &order.ProductID, &order.TotalPrice, &paidInt, &doneInt)
+		err := rows.Scan(&order.OrderID, &order.StudentID, &order.StoreID, &order.ProductID, &order.TotalPrice, &order.Note, &paidInt, &doneInt)
 		if err != nil {
 			panic(err)
 		}
@@ -202,18 +270,32 @@ func initialize() {
 		orders = append(orders, order)
 	}
 
-	rows, err = db.Query("SELECT product_id, name, price FROM products")
+	rows, err = db.Query("SELECT product_id, name, price, image_url FROM products")
 	if err != nil {
 		panic(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var product Product
-		err := rows.Scan(&product.ProductID, &product.Name, &product.Price)
+		err := rows.Scan(&product.ProductID, &product.Name, &product.Price, &product.ImageURL)
 		if err != nil {
 			panic(err)
 		}
 		products = append(products, product)
+	}
+
+	rows, err = db.Query("SELECT user_id, username, password, store_id FROM users")
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var user User
+		err := rows.Scan(&user.UserID, &user.Username, &user.Password, &user.StoreID)
+		if err != nil {
+			panic(err)
+		}
+		users = append(users, user)
 	}
 }
 
@@ -228,14 +310,14 @@ func persist() {
 		if err != nil {
 			panic(err)
 		}
-		_, err = db.Exec("REPLACE INTO stores (store_id, name, products) VALUES (?, ?, ?)", store.StoreID, store.Name, string(productsJSON))
+		_, err = db.Exec("REPLACE INTO stores (store_id, name, products, image_url, menu_url) VALUES (?, ?, ?, ?, ?)", store.StoreID, store.Name, string(productsJSON), store.ImageURL, store.MenuURL)
 		if err != nil {
 			panic(err)
 		}
 	}
 
 	for _, product := range products {
-		_, err = db.Exec("REPLACE INTO products (product_id, store_id, name, price) VALUES (?, ?, ?, ?)", product.ProductID, product.StoreID, product.Name, product.Price)
+		_, err = db.Exec("REPLACE INTO products (product_id, store_id, name, price, image_url) VALUES (?, ?, ?, ?, ?)", product.ProductID, product.StoreID, product.Name, product.Price, product.ImageURL)
 		if err != nil {
 			panic(err)
 		}
@@ -252,13 +334,21 @@ func persist() {
 		}
 
 		_, err = db.Exec(
-			"REPLACE INTO orders (order_id, student_id, store_id, product_id, total_price, paid, done) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			order.OrderID, order.StudentID, order.StoreID, order.ProductID, order.TotalPrice, paidInt, doneInt,
+			"REPLACE INTO orders (order_id, student_id, store_id, product_id, total_price, note, paid, done) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			order.OrderID, order.StudentID, order.StoreID, order.ProductID, order.TotalPrice, order.Note, paidInt, doneInt,
 		)
 		if err != nil {
 			panic(err)
 		}
 	}
+
+	for _, user := range users {
+		_, err = db.Exec("REPLACE INTO users (user_id, username, password, store_id) VALUES (?, ?, ?, ?)", user.UserID, user.Username, user.Password, user.StoreID)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	db.Close()
 }
 
@@ -290,29 +380,33 @@ func jsonResponse(w http.ResponseWriter, status int, data any) {
 	w.Write(json)
 }
 
+// --- Store
 func handleStoreCreate(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		jsonResponse(w, http.StatusBadRequest, "Missing store name")
+	var createStoreRequest CreateStoreRequest
+	err := json.NewDecoder(r.Body).Decode(&createStoreRequest)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, "Invalid store data")
 		return
 	}
+
 	if len(stores) >= 1000 {
 		jsonResponse(w, http.StatusBadRequest, "Store limit reached, have we reached that point?")
 		return
 	}
-	newStore := Store{
-		StoreID:  len(stores) + 1,
-		Name:     name,
-		Products: []Product{},
-	}
+
+	newStoreID := len(stores) + 1
+	var newStore Store
+
+	createStoreRequest.toStore(&newStore, newStoreID)
 	stores = append(stores, newStore)
+
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"ok":       "true",
 		"store_id": newStore.StoreID,
 	})
 }
 
-// TODO add User type and check permissions
+// TODO check permissions
 func handleStoreDelete(w http.ResponseWriter, r *http.Request) {
 	storeIDStr := r.URL.Query().Get("store_id")
 	storeID, err := strconv.Atoi(storeIDStr)
@@ -409,6 +503,7 @@ func handleGetStore(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusBadRequest, "Store not found")
 }
 
+// --- Product
 func handleGetProduct(w http.ResponseWriter, r *http.Request) {
 	productIDStr := r.URL.Query().Get("product_id")
 	productID, err := strconv.Atoi(productIDStr)
@@ -442,6 +537,7 @@ func handleGetProductsFromStore(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, products)
 }
 
+// --- Order
 func handleAddOrder(w http.ResponseWriter, r *http.Request) {
 	var createOrderRequest CreateOrderRequest
 	err := json.NewDecoder(r.Body).Decode(&createOrderRequest)
@@ -545,8 +641,83 @@ func handleGetOrdersForStudent(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, studentOrders)
 }
 
+// --- User
+func handleUserSignup(w http.ResponseWriter, r *http.Request) {
+	var signupReq UserLoginRequest
+	err := json.NewDecoder(r.Body).Decode(&signupReq)
+	if err != nil {
+		http.Error(w, "Invalid signup data", http.StatusBadRequest)
+		return
+	}
+
+	// Check if username already exists
+	for _, user := range users {
+		if user.Username == signupReq.Username {
+			http.Error(w, "Username already exists", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Make sure password length does not exceed 72 bytes (bcrypt limit)
+	if len(signupReq.Password) > 72 {
+		http.Error(w, "Password too long", http.StatusBadRequest)
+		return
+	}
+
+	// Hash password
+	hashedPassword, err := hashPassword(signupReq.Password)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// TODO jwt tokens
+	var user User
+	signupReq.toUser(&user, hashedPassword, len(users)+1, 1)
+	users = append(users, user)
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"user_id": user.UserID,
+	})
+}
+
+func handleUserLogin(w http.ResponseWriter, r *http.Request) {
+	var loginReq UserLoginRequest
+	err := json.NewDecoder(r.Body).Decode(&loginReq)
+	if err != nil {
+		http.Error(w, "Invalid login data", http.StatusBadRequest)
+		return
+	}
+
+	for _, user := range users {
+		if user.Username == loginReq.Username {
+			if checkPasswordHash(loginReq.Password, user.Password) {
+				jsonResponse(w, http.StatusOK, map[string]any{
+					"user_id":  user.UserID,
+					"store_id": user.StoreID,
+				})
+				return
+			} else {
+				http.Error(w, "Invalid password", http.StatusUnauthorized)
+				return
+			}
+		}
+	}
+	http.Error(w, "User not found", http.StatusNotFound)
+}
+
 func middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		log.Printf("%s %s\n", r.Method, r.URL.Path)
 		next.ServeHTTP(w, r)
 	})
@@ -570,18 +741,21 @@ func main() {
 
 	router.HandleFunc("/store", handleGetStore).Methods("GET")
 	router.HandleFunc("/store/create", handleStoreCreate).Methods("POST")
-	router.HandleFunc("/store/delete", handleStoreDelete)
-	router.HandleFunc("/store/product", handleGetProductsFromStore)
-	router.HandleFunc("/store/product/add", handleStoreAddProduct)
-	router.HandleFunc("/store/product/remove", handleStoreRemoveProduct)
-	router.HandleFunc("/store/orders", handleGetOrdersForStore)
+	router.HandleFunc("/store/delete", handleStoreDelete).Methods("POST")
+	router.HandleFunc("/store/product", handleGetProductsFromStore).Methods("GET")
+	router.HandleFunc("/store/product/add", handleStoreAddProduct).Methods("POST")
+	router.HandleFunc("/store/product/remove", handleStoreRemoveProduct).Methods("POST")
+	router.HandleFunc("/store/orders", handleGetOrdersForStore).Methods("GET")
 
-	router.HandleFunc("/product", handleGetProduct)
+	router.HandleFunc("/product", handleGetProduct).Methods("GET")
 
-	router.HandleFunc("/orders/", handleGetOrder)
-	router.HandleFunc("/orders/add", handleAddOrder)
-	router.HandleFunc("/orders/update", handleUpdateOrder)
-	router.HandleFunc("/orders/student", handleGetOrdersForStudent)
+	router.HandleFunc("/orders", handleGetOrder).Methods("GET")
+	router.HandleFunc("/orders/add", handleAddOrder).Methods("POST")
+	router.HandleFunc("/orders/update", handleUpdateOrder).Methods("POST")
+	router.HandleFunc("/orders/student", handleGetOrdersForStudent).Methods("GET")
+
+	router.HandleFunc("/user/signup", handleUserSignup).Methods("POST")
+	router.HandleFunc("/user/login", handleUserLogin).Methods("POST")
 
 	loggedRouter := middleware(router)
 	http.ListenAndServe(":8080", loggedRouter)
