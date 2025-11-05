@@ -33,3 +33,5 @@ http://10.30.32.31:5173 #website
 http://10.30.32.31:8080 #backend
 ```
 จะสามารถเข้าถึงได้ถ้าต่อ Wifi คณะหรือ VPN คณะนะครับ
+
+ส่วน Discord สามารถเข้าได้ผ่าน https://discord.gg/mqcAXdCyxM
