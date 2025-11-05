@@ -34,4 +34,15 @@ http://10.30.32.31:8080 #backend
 ```
 จะสามารถเข้าถึงได้ถ้าต่อ Wifi คณะหรือ VPN คณะนะครับ
 
+รหัสของร้านค้าในหน้า frontend:
+```sh
+# ร้านก๋วยเตี๋ยว
+Username admin
+Password asdfasdf
+
+# ร้านข้าวมันไก่
+Username admin2
+Password asdfasdf
+```
+
 ส่วน Discord สามารถเข้าได้ผ่าน https://discord.gg/mqcAXdCyxM
