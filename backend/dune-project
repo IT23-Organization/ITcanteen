@@ -27,7 +27,8 @@
           caqti-driver-sqlite3
           dream
           lwt_ppx
-          ppx_deriving)
+          ppx_deriving
+          jwto)
  (tags
   (topics "to describe" your project)))
 

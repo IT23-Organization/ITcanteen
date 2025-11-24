@@ -19,6 +19,7 @@ depends: [
   "dream"
   "lwt_ppx"
   "ppx_deriving"
+  "jwto"
   "odoc" {with-doc}
 ]
 build: [

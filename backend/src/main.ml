@@ -1,7 +1,6 @@
-(* Product -> Store *)
-(*   |              *)
-(*   v              *)
-(* Order   -> User  *)
+(* ============================== *)
+(* Types                          *)
+(* ============================== *)
 
 type product =
   { product_id : int
@@ -32,14 +31,35 @@ type order =
 let orders_to_json orders =
   `List (List.map order_to_yojson orders)
 
-type user =
-  { user_id  : int
-  ; username : string
-  ; orders   : order list
-  } [@@deriving show, yojson]
+let order_t : order Caqti_type.t =
+  let encode { order_id; user_id; product_ids; total; paid } =
+    Ok ( order_id
+       , user_id
+       , Yojson.Safe.to_string
+          (`List (List.map (fun i -> `Int i) product_ids))
+       , total
+       , paid)
+  in
+  let decode (order_id, user_id, product_ids_json, total, paid) =
+    match Yojson.Safe.from_string product_ids_json with
+    | `List lst ->
+      let product_ids =
+        List.filter_map (function `Int i -> Some i | _ -> None) lst
+      in
+      Ok { order_id; user_id; product_ids; total; paid }
+    | _ -> Error "Expected JSON list for product_ids"
+  in
+  Caqti_type.custom
+    ~encode
+    ~decode
+    Caqti_type.(t5 int int string float bool)
 
-let users_to_json users =
-  `List (List.map user_to_yojson users)
+type user =
+  { user_id   : int
+  ; username  : string
+  ; password  : string (* hashed password *)
+  ; user_type : string (* "USER" | "STORE" | "ADMIN" *)
+  } [@@deriving show, yojson]
 
 let example_stores: store list =
   [ { store_id = 1
@@ -58,7 +78,7 @@ let example_stores: store list =
     }
   ]
 
-let create_order (user_id: int) (product_ids: int list) : order =
+let create_order (order_id: int) (user_id: int) (product_ids: int list) : order =
   let total = List.fold_left (fun acc pid ->
       (* Try to find a product with the given product_id (pid) in all example
         stores *)
@@ -72,12 +92,16 @@ let create_order (user_id: int) (product_ids: int list) : order =
       (* If not found, just return the accumulator unchanged *)
       | None -> acc
     ) 0.0 product_ids in
-  { order_id = Random.int 1000
+  { order_id
   ; user_id
   ; product_ids
   ; total
   ; paid = false
   }
+
+(* ============================== *)
+(* Utility                        *)
+(* ============================== *)
 
 let ok_json obj =
   Dream.response
@@ -104,7 +128,119 @@ let to_list_option = function
   | `List lst -> Some lst
   | _ -> None
 
+(* ============================== *)
+(* State                          *)
+(* ============================== *)
+
+type state =
+  { mutable stores: store list
+  ; mutable orders: order list
+  ; mutable users:  user  list
+  ; mutable until_replicate: int
+  }
+
+let state_new () =
+  { stores = example_stores
+  ; orders = []
+  ; users  = []
+  ; until_replicate = 0
+  }
+
+let state_save state =
+  let query1 =
+    let open Caqti_request.Infix in
+    (* Insert orders by clearing the table first *)
+    (Caqti_type.unit ->. Caqti_type.unit) "DELETE FROM orders"
+  in
+
+  let query2 =
+    let open Caqti_request.Infix in
+    (Caqti_type.(t5 int int string float bool) ->. Caqti_type.unit)
+    "INSERT INTO orders (order_id, user_id, product_ids, total, paid)
+     VALUES (?, ?, ?, ?, ?)"
+  in
+
+  (fun (module Db: Caqti_lwt.CONNECTION) ->
+    let%lwt res = Db.exec query1 () in
+    match res with
+    | Error _ as e -> Lwt.return e
+    | Ok () ->
+      let rec insert_orders = function
+        | [] -> Lwt.return (Ok ())
+        | o :: os ->
+          let%lwt res = Db.exec query2 (o.order_id, o.user_id,
+            Yojson.Safe.to_string
+              (`List (List.map (fun i -> `Int i) o.product_ids)),
+            o.total, o.paid) in
+          match res with
+          | Ok () -> insert_orders os
+          | Error _ as e -> Lwt.return e
+      in
+      insert_orders state.orders)
+
+let state_replicate_if_could state (r: Dream.request) =
+  if state.until_replicate <= 0 then begin
+    state.until_replicate <- 5;
+    Dream.log "Replicating to database";
+    let%lwt res = Dream.sql r (state_save state) in
+    match res with
+    | Ok () ->
+      Dream.log "Replication successful";
+      Lwt.return ()
+    | Error err -> Dream.log "Replication error: %s"
+        (Caqti_error.show err);
+    Lwt.return ()
+  end else begin
+    state.until_replicate <- state.until_replicate - 1;
+    Lwt.return ()
+  end
+
+let state_get_order state order_id =
+  List.find_opt (fun o -> o.order_id = order_id) state.orders
+
+let state_filter_orders state f =
+  List.filter f state.orders
+
+let state_add_order state order =
+  state.orders <- order :: state.orders
+
+let state_create_user state username password user_type =
+  let id = List.length state.users in
+  state.users <- { user_id = id; username; password; user_type } :: state.users;
+  id
+
+(* ============================== *)
+(* Auth                           *)
+(* ============================== *)
+
+let user_sign_up (username: string) (password: string) =
+  let payload =
+    [ ("username", username)
+    ; ("password", password)
+    ] in
+  let hash = Jwto.encode Jwto.HS256 "secret" payload in
+  match hash with
+  | Ok token ->
+    let query =
+      let open Caqti_request.Infix in
+      (Caqti_type.(t3 string string string) ->. Caqti_type.unit)
+      "INSERT INTO users (username, password, user_type)
+       VALUES (?, ?, ?)" in
+    Ok (token,
+      { user_id = 0 (* Placeholder, should be from DB *)
+      ; username
+      ; password
+      ; user_type = "USER"
+      })
+  | Error _ -> Error "Failed to generate JWT token"
+
+(* ============================== *)
+(* Entry                          *)
+(* ============================== *)
+
 let () =
+  let s = ref (state_new ()) in
+
   Dream.run
   @@ Dream.logger
   @@ Dream.sql_pool "sqlite3:data.sqlite"
@@ -121,7 +257,26 @@ let () =
       | Some store -> store_to_yojson store |> ok_json
       | None -> not_found "Store not found")
 
+    ; Dream.get "/order" (fun _ ->
+      orders_to_json !s.orders |> ok_json)
+
+    ; Dream.get "/order/:id" (fun req ->
+      let id = Dream.param req "id" |> int_of_string in
+      let orders = state_filter_orders !s (fun o ->
+        (* Check what stores the product_ids is from and filter it to the id *)
+        List.exists (fun pid ->
+          List.exists (fun store ->
+            store.store_id = id &&
+            List.exists (fun p -> p.product_id = pid) store.products
+          ) example_stores
+        ) o.product_ids
+      ) in
+      ok_json (orders_to_json orders))
+
     ; Dream.post "/order/place" (fun req ->
+      (* curl -X POST http://localhost:8080/order/place \
+         -H "Content-Type: application/json" \
+         -d '{ "user_id": 1, "product_ids": [1, 2] }' *)
       let%lwt body = Dream.body req in
 
       let json = try Yojson.Safe.from_string body with
@@ -155,6 +310,8 @@ let () =
         if user_id = -1 || product_ids = [] then
           bad_request "Invalid user_id or product_ids"
         else
-          let order = create_order user_id product_ids in
+          let id = List.length !s.orders in
+          let order = create_order id user_id product_ids in
+          let%lwt _ = state_add_order !s order req in
           order_to_yojson order |> ok_json)
-    ]
+          ]
